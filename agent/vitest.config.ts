@@ -1,0 +1,12 @@
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    coverage: {
+      provider: 'v8',
+      include: ['src/loop.ts', 'src/providers.ts'],
+      exclude: ['src/**/*.test.ts'],
+      thresholds: { lines: 80, functions: 80, statements: 80 },
+    },
+  },
+});

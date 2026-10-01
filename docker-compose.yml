@@ -1,0 +1,65 @@
+services:
+  mongo:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: codeclash
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        if [ ! -f /data/db/keyfile ]; then
+          head -c 756 /dev/urandom | base64 > /data/db/keyfile
+          chmod 400 /data/db/keyfile
+          chown 999:999 /data/db/keyfile
+        fi
+        exec docker-entrypoint.sh mongod --replSet rs0 --bind_ip_all --auth --keyFile /data/db/keyfile
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "-u", "root", "-p", "codeclash", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  mongo-init:
+    image: mongo:7
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    entrypoint:
+      - bash
+      - -c
+      - |
+        mongosh "mongodb://root:codeclash@mongo:27017/admin?directConnection=true&authSource=admin" --eval '
+          try { rs.status() } catch (e) {
+            rs.initiate({_id:"rs0", members:[{_id:0, host:"localhost:27017"}]})
+          }
+          for (let i = 0; i < 60 && !db.hello().isWritablePrimary; i++) sleep(500);
+          const ignoreExisting = (fn) => { try { fn() } catch (e) { if (e.code !== 51002 && e.code !== 51003) throw e } };
+          const audit = db.getSiblingDB("codeclash_audit");
+          ignoreExisting(() => audit.createRole({
+            role: "auditWriter",
+            privileges: [{ resource: { db: "codeclash_audit", collection: "audit" }, actions: ["find", "insert"] }],
+            roles: []
+          }));
+          ignoreExisting(() => audit.createUser({ user: "auditWriter", pwd: "codeclash", roles: [{ role: "auditWriter", db: "codeclash_audit" }] }));
+          audit.audit.createIndex({ at: -1 });
+          ignoreExisting(() => db.getSiblingDB("codeclash").createUser({ user: "app", pwd: "codeclash", roles: [{ role: "readWrite", db: "codeclash" }] }));
+          print("users ready");
+        '
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  mongo-data:

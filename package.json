@@ -1,0 +1,38 @@
+{
+  "name": "codeclash",
+  "version": "2.0.0",
+  "private": true,
+  "description": "CodeClash — live coding and quiz contests",
+  "workspaces": [
+    "packages/shared",
+    "server",
+    "judge",
+    "agent",
+    "client"
+  ],
+  "scripts": {
+    "predev": "npm run build -w packages/shared && npm run build -w judge && npm run build -w agent",
+    "dev": "concurrently -n server,judge,agent,client -c black,black,black,black \"npm run dev -w server\" \"npm run dev -w judge\" \"npm run dev -w agent\" \"npm run dev -w client\"",
+    "test": "npm run build -w packages/shared && npm run build -w judge && npm run build -w agent && npm run test -w packages/shared && npm run test -w agent && npm run test -w judge && npm run test -w server",
+    "test:coverage": "npm run test:coverage -w packages/shared && npm run test:coverage -w agent && npm run test:coverage -w server && npm run test:coverage -w judge",
+    "seed": "npm run seed -w server",
+    "lint": "eslint .",
+    "backup": "node scripts/backup.mjs",
+    "build": "npm run build -w packages/shared && npm run build -w judge && npm run build -w agent && npm run build -w server && npm run build -w client",
+    "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w server && npm run typecheck -w judge && npm run typecheck -w agent && npm run typecheck -w client"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.52.0",
+    "concurrently": "^9.1.2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^15.15.0",
+    "typescript-eslint": "^8.71.0"
+  },
+  "allowScripts": {
+    "mongodb-memory-server@10.4.3": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.12": true
+  }
+}
