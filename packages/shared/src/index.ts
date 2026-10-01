@@ -15,6 +15,28 @@ export type ContestStatus = (typeof CONTEST_STATUSES)[number];
 export const ROLES = ['participant', 'setter', 'organiser', 'admin'] as const;
 export type Role = (typeof ROLES)[number];
 
+export const SOURCE_LANGUAGES = ['python', 'javascript', 'c', 'cpp', 'java', 'go'] as const;
+export type SourceLanguage = (typeof SOURCE_LANGUAGES)[number];
+
+export const LANGUAGE_NAMES: Record<SourceLanguage, string> = {
+  python: 'Python 3',
+  javascript: 'JavaScript (Node)',
+  c: 'C (gcc)',
+  cpp: 'C++17 (g++)',
+  java: 'Java 21',
+  go: 'Go',
+};
+
+/** Used when a problem has no limit stored for that language. Java gets more room for the JVM. */
+export function defaultLimit(language: SourceLanguage): { timeMs: number; memoryMb: number } {
+  if (language === 'java') return { timeMs: 3000, memoryMb: 512 };
+  return { timeMs: 2000, memoryMb: 256 };
+}
+
+export function defaultLimits(): Record<SourceLanguage, { timeMs: number; memoryMb: number }> {
+  return Object.fromEntries(SOURCE_LANGUAGES.map((language) => [language, defaultLimit(language)])) as Record<SourceLanguage, { timeMs: number; memoryMb: number }>;
+}
+
 const NEXT: Record<ContestStatus, ContestStatus[]> = {
   draft: ['registration_open', 'cancelled'],
   registration_open: ['running', 'cancelled'],

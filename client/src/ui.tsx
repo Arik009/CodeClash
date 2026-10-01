@@ -4,16 +4,24 @@ import { api } from './api';
 
 const LazyEditor = lazy(() => import('./monaco'));
 
-export type Language = 'python' | 'javascript';
+export type Language = 'python' | 'javascript' | 'c' | 'cpp' | 'java' | 'go';
 
 export const LANGUAGES: { id: Language; name: string }[] = [
   { id: 'python', name: 'Python 3' },
   { id: 'javascript', name: 'JavaScript (Node)' },
+  { id: 'c', name: 'C (gcc)' },
+  { id: 'cpp', name: 'C++17 (g++)' },
+  { id: 'java', name: 'Java 21' },
+  { id: 'go', name: 'Go' },
 ];
 
 export const STARTERS: Record<Language, string> = {
   python: 'import sys\n\ndata = sys.stdin.read().split()\n# read from data, print the answer\n',
   javascript: "const data = require('fs').readFileSync(0, 'utf8').trim().split(/\\s+/);\n// read from data, print the answer\n",
+  c: '#include <stdio.h>\n\nint main(void) {\n    /* read stdin, print the answer */\n    return 0;\n}\n',
+  cpp: '#include <iostream>\n\nint main() {\n    // read stdin, print the answer\n    return 0;\n}\n',
+  java: 'import java.util.Scanner;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner in = new Scanner(System.in);\n        // read stdin, print the answer\n    }\n}\n',
+  go: 'package main\n\nimport "fmt"\n\nfunc main() {\n    // read stdin, print the answer\n    _ = fmt.Println\n}\n',
 };
 
 export function Editor(props: {
@@ -46,7 +54,10 @@ export function useDraft(key: string, fallback: string) {
 
 /** Remembers the last language across problems. */
 export function useLanguage() {
-  const [language, setLanguage] = useState<Language>(() => (localStorage.getItem('cc.language') as Language | null) ?? 'python');
+  const [language, setLanguage] = useState<Language>(() => {
+    const stored = localStorage.getItem('cc.language');
+    return LANGUAGES.some((item) => item.id === stored) ? stored as Language : 'python';
+  });
   function update(next: Language) {
     setLanguage(next);
     localStorage.setItem('cc.language', next);

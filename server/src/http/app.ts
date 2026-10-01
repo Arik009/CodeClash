@@ -1,4 +1,4 @@
-import { quizScore, streakBonus, ROLES, type ContestStatus, type Role } from '@codeclash/shared';
+import { quizScore, streakBonus, defaultLimits, ROLES, SOURCE_LANGUAGES, type ContestStatus, type Role, type SourceLanguage } from '@codeclash/shared';
 import { randomBytes } from 'node:crypto';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -392,7 +392,7 @@ export function createApp(deps: AppDeps) {
       problemId: problem.insertedId,
       version: 1,
       ...body,
-      limits: { javascript: { timeMs: 2000, memoryMb: 256 }, python: { timeMs: 2000, memoryMb: 256 } },
+      limits: defaultLimits(),
       subtasks: [],
       tests: [],
       reference: null,
@@ -504,8 +504,8 @@ export function createApp(deps: AppDeps) {
         group: z.string().optional(),
       })),
       subtasks: z.array(z.object({ name: z.string().min(1), points: z.number().int().positive() })).default([]),
-      reference: z.object({ language: z.enum(['javascript', 'python']), code: z.string() }).nullable().default(null),
-      wrongSolutions: z.array(z.object({ label: z.string(), language: z.enum(['javascript', 'python']), code: z.string() })).default([]),
+      reference: z.object({ language: z.enum(SOURCE_LANGUAGES), code: z.string() }).nullable().default(null),
+      wrongSolutions: z.array(z.object({ label: z.string(), language: z.enum(SOURCE_LANGUAGES), code: z.string() })).default([]),
       limits: z.record(z.object({ timeMs: z.number().int().positive(), memoryMb: z.number().int().positive() })).optional(),
     }).parse(req.body);
     const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(req.params.id) });
@@ -630,7 +630,7 @@ export function createApp(deps: AppDeps) {
     await assertVerified(db, user.sub);
     const body = z.object({
       problemVersionId: z.string(),
-      language: z.enum(['javascript', 'python']),
+      language: z.enum(SOURCE_LANGUAGES),
       code: z.string().min(1).max(64_000),
     }).parse(req.body);
     await submitLimit(user.sub);
@@ -659,7 +659,7 @@ export function createApp(deps: AppDeps) {
     await assertVerified(db, user.sub);
     const body = z.object({
       problemVersionId: z.string(),
-      language: z.enum(['javascript', 'python']),
+      language: z.enum(SOURCE_LANGUAGES),
       code: z.string().min(1).max(64_000),
       contestId: z.string().optional(),
     }).parse(req.body);
@@ -671,7 +671,7 @@ export function createApp(deps: AppDeps) {
     await assertVerified(db, user.sub);
     const body = z.object({
       problemVersionId: z.string(),
-      language: z.enum(['javascript', 'python']),
+      language: z.enum(SOURCE_LANGUAGES),
       code: z.string().min(1).max(64_000),
     }).parse(req.body);
     const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(body.problemVersionId) });
@@ -892,7 +892,7 @@ export function createApp(deps: AppDeps) {
           provider: providerFromEnv({ samples: String(version.samples ?? '') }),
           statement: String(version.statement ?? ''),
           samples: String(version.samples ?? ''),
-          reference: version.reference as { language: 'javascript' | 'python'; code: string },
+          reference: version.reference as { language: SourceLanguage; code: string },
           existingInputs: ((version.tests as { input: string }[]) ?? []).map((t) => t.input),
           monthlyUsed: (usedRows[0]?.tokens as number) ?? 0,
           monthlyCap: Number(process.env.AGENT_MONTHLY_TOKEN_CAP ?? 200_000),

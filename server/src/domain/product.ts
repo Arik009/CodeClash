@@ -1,4 +1,4 @@
-import { practiceStreak, rateContest, type Role } from '@codeclash/shared';
+import { defaultLimit, practiceStreak, rateContest, type Role, type SourceLanguage } from '@codeclash/shared';
 import { createHash, randomBytes } from 'node:crypto';
 import { type Db, ObjectId } from 'mongodb';
 import { HttpError } from './errors.js';
@@ -69,7 +69,7 @@ export async function rejudgeSubmissions(
 export async function runSamples(
   db: Db,
   run: RunCase,
-  input: { problemVersionId: string; language: 'javascript' | 'python'; code: string; userId: string; contestId?: string },
+  input: { problemVersionId: string; language: SourceLanguage; code: string; userId: string; contestId?: string },
 ) {
   const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(input.problemVersionId) });
   if (!version) throw new HttpError(404, 'Problem version not found');
@@ -89,7 +89,7 @@ export async function runSamples(
   const tests = ((version.tests as { input: string; output: string; hidden?: boolean }[]) ?? []).filter((test) => test.hidden === false);
   if (tests.length === 0) throw new HttpError(400, 'This problem has no sample tests');
   const limits = (version.limits as Record<string, { timeMs: number; memoryMb: number }>) ?? {};
-  const limit = limits[input.language] ?? { timeMs: 2000, memoryMb: 256 };
+  const limit = limits[input.language] ?? defaultLimit(input.language);
   const results = [];
   for (const test of tests) {
     const outcome = await run({

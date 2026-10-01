@@ -1,3 +1,4 @@
+import type { SourceLanguage } from '@codeclash/shared';
 import { type Db, ObjectId } from 'mongodb';
 import { HttpError } from './errors.js';
 
@@ -30,7 +31,7 @@ export async function enqueueSubmission(
     userId: string;
     contestId?: string;
     problemVersionId: string;
-    language: 'javascript' | 'python';
+    language: SourceLanguage;
     code: string;
     kind: 'contest' | 'practice';
     idempotencyKey?: string;

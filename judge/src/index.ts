@@ -1,3 +1,4 @@
+import { defaultLimit, type SourceLanguage } from '@codeclash/shared';
 import 'dotenv/config';
 import { randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
@@ -63,8 +64,8 @@ async function handle(stream: string, id: string, submissionId: string) {
     const tests = (version?.tests as { input: string; output: string; group?: string }[]) ?? [];
     const subtasks = (version?.subtasks as { name: string; points: number }[]) ?? [];
     const limits = (version?.limits as Record<string, { timeMs: number; memoryMb: number }>) ?? {};
-    const language = claimed.language as 'javascript' | 'python';
-    const limit = limits[language] ?? { timeMs: 2000, memoryMb: 256 };
+    const language = claimed.language as SourceLanguage;
+    const limit = limits[language] ?? defaultLimit(language);
     await db.collection('submissions').updateOne({ _id: claimed._id, claimToken: token }, { $set: { status: 'running' } });
     const run = (test: { input: string; output: string }) => runInDocker({
       language,

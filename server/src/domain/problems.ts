@@ -1,10 +1,11 @@
+import type { SourceLanguage } from '@codeclash/shared';
 import AdmZip from 'adm-zip';
 import { type Db, ObjectId } from 'mongodb';
 import { auditCollection } from '../db/audit.js';
 import { HttpError } from './errors.js';
 
 export interface RunCaseInput {
-  language: 'javascript' | 'python';
+  language: SourceLanguage;
   code: string;
   stdin: string;
   expected: string;
@@ -74,7 +75,7 @@ export async function runPublishCheck(db: Db, versionId: string, run: RunCase): 
   await db.collection('problem_versions').updateOne({ _id: version._id }, { $set: { status: 'checking' } });
 
   const tests = (version.tests as { input: string; output: string }[]) ?? [];
-  const reference = version.reference as { language: 'javascript' | 'python'; code: string } | null;
+  const reference = version.reference as { language: SourceLanguage; code: string } | null;
   const limits = (version.limits as Record<string, { timeMs: number; memoryMb: number }>) ?? {};
   const missing: string[] = [];
   if (!reference) missing.push('no reference solution');
@@ -96,7 +97,7 @@ export async function runPublishCheck(db: Db, versionId: string, run: RunCase): 
     }
   }
 
-  const wrongSolutions = (version.wrongSolutions as { label: string; language: 'javascript' | 'python'; code: string }[]) ?? [];
+  const wrongSolutions = (version.wrongSolutions as { label: string; language: SourceLanguage; code: string }[]) ?? [];
   const wrongReports: { label: string; verdicts: string[] }[] = [];
   for (const wrong of wrongSolutions) {
     const limit = limits[wrong.language] ?? { timeMs: 2000, memoryMb: 256 };

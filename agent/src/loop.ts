@@ -1,4 +1,4 @@
-import { gateTool, type GateDecision } from '@codeclash/shared';
+import { gateTool, SOURCE_LANGUAGES, type GateDecision, type SourceLanguage } from '@codeclash/shared';
 import { z } from 'zod';
 import { type Provider } from './providers.js';
 
@@ -14,14 +14,14 @@ function normalizeInput(text: string) {
   return text.replace(/\r\n/g, '\n').trim();
 }
 const codeArgs = z.object({
-  language: z.enum(['javascript', 'python']),
+  language: z.enum(SOURCE_LANGUAGES),
   code: z.string().min(1),
   stdin: z.string().default(''),
 });
 
 export interface Proposal {
   kind: 'test' | 'wrong_solution';
-  language: 'javascript' | 'python';
+  language: SourceLanguage;
   code: string;
   stdin?: string;
   expected?: string;
@@ -49,8 +49,8 @@ export async function harden(input: {
   provider: Provider;
   statement: string;
   samples: string;
-  reference: { language: 'javascript' | 'python'; code: string };
-  runSandbox: (code: string, language: 'javascript' | 'python', stdin: string) => Promise<{ verdict: string; stdout: string }>;
+  reference: { language: SourceLanguage; code: string };
+  runSandbox: (code: string, language: SourceLanguage, stdin: string) => Promise<{ verdict: string; stdout: string }>;
   audit: (row: AuditRow) => Promise<void>;
   monthlyUsed?: number;
   monthlyCap?: number;

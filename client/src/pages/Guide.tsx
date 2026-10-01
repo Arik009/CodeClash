@@ -51,6 +51,7 @@ export function Guide() {
         </Term>
 
         <Term path="judging">
+          <Line cmd="languages">Python, JavaScript, C, C++17, Java 21, Go. Read stdin, print the answer. Java’s class is Main.</Line>
           <Line cmd="submit">Returns an id at once. Own container. No network. Time and memory limits.</Line>
           <Line cmd="verdicts">Accepted, Wrong answer, Time limit, Memory limit, Runtime error, Compilation error</Line>
           <Line cmd="run samples">Visible examples only. Nothing is stored.</Line>

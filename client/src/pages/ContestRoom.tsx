@@ -5,7 +5,7 @@ import { io } from 'socket.io-client';
 import { api } from '../api';
 import { CodePanel, ProblemView, type Limits } from '../problem';
 import {
-  Alert, Empty, errorText, formatLeft, formatWhen, letter, StatusPill, toast, useLanguage, useNow, VerdictText,
+  Alert, Empty, errorText, formatLeft, formatWhen, LANGUAGES, letter, StatusPill, toast, useLanguage, useNow, VerdictText,
 } from '../ui';
 
 interface Cell { solved: boolean; tries: number; minute: number | null }
@@ -342,7 +342,7 @@ export function ContestRoom({ me }: { me: string | null }) {
                         if (index2 >= 0) go({ tab: 'problems', p: letter(index2) });
                       }}>{titleOf(s.problemId)}</button>
                     </td>
-                    <td className="muted">{s.language === 'python' ? 'Python 3' : 'Node.js'}</td>
+                    <td className="muted">{LANGUAGES.find((item) => item.id === s.language)?.name ?? s.language}</td>
                     <td><VerdictText verdict={s.verdict} status={s.status} /></td>
                   </tr>
                 ))}

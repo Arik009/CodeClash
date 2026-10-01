@@ -4,6 +4,9 @@ import * as monaco from 'monaco-editor/editor';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import 'monaco-editor/languages/definitions/python/register';
 import 'monaco-editor/languages/definitions/javascript/register';
+import 'monaco-editor/languages/definitions/cpp/register';
+import 'monaco-editor/languages/definitions/java/register';
+import 'monaco-editor/languages/definitions/go/register';
 import { useEffect, useRef } from 'react';
 import { monacoTheme, useTheme } from './theme';
 
@@ -12,7 +15,7 @@ self.MonacoEnvironment = { getWorker: () => new EditorWorker() };
 loader.config({ monaco: monaco as never });
 
 export default function CodeEditor(props: {
-  language: 'python' | 'javascript';
+  language: 'python' | 'javascript' | 'c' | 'cpp' | 'java' | 'go';
   value: string;
   onChange: (value: string) => void;
   height?: string;

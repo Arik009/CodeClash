@@ -1,3 +1,4 @@
+import type { SourceLanguage } from '@codeclash/shared';
 import 'dotenv/config';
 import { MongoClient, ObjectId } from 'mongodb';
 import { harden } from './loop.js';
@@ -30,7 +31,7 @@ async function work(versionId: string) {
     provider: providerFromEnv({ samples: String(version.samples ?? '') }),
     statement: String(version.statement ?? ''),
     samples: String(version.samples ?? ''),
-    reference: version.reference as { language: 'javascript' | 'python'; code: string },
+    reference: version.reference as { language: SourceLanguage; code: string },
     existingInputs: ((version.tests as { input: string }[]) ?? []).map((t) => t.input),
     monthlyUsed: await usedThisMonth(),
     monthlyCap: cap,

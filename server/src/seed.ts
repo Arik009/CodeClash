@@ -1,3 +1,4 @@
+import { defaultLimits } from '@codeclash/shared';
 import 'dotenv/config';
 import { hash } from '@node-rs/argon2';
 import { MongoClient, ObjectId } from 'mongodb';
@@ -48,7 +49,7 @@ for (const item of [...CATALOG, ...MORE]) {
     editorial: item.editorial,
     tags: item.tags,
     difficulty: item.difficulty ?? 'easy',
-    limits: { javascript: { timeMs: 2000, memoryMb: 256 }, python: { timeMs: 2000, memoryMb: 256 } },
+    limits: defaultLimits(),
     subtasks: item.subtasks ?? [],
     tests: item.tests,
     reference: { language: 'python', code: item.reference },

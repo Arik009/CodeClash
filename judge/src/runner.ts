@@ -1,3 +1,4 @@
+import type { SourceLanguage } from '@codeclash/shared';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -6,7 +7,7 @@ import path from 'node:path';
 import { classifyRun, type JudgeVerdict } from './decide.js';
 
 export interface RunRequest {
-  language: 'javascript' | 'python';
+  language: SourceLanguage;
   code: string;
   stdin: string;
   expected: string;
@@ -22,40 +23,147 @@ export interface RunOutcome {
   stderr: string;
 }
 
-const IMAGES = {
-  javascript: process.env.RUNNER_NODE_IMAGE ?? 'node:22-alpine',
-  python: process.env.RUNNER_PYTHON_IMAGE ?? 'python:3.12-alpine',
+interface LangSpec {
+  image: string;
+  env: string;
+  source: string;
+  /** Argv run inside the image. Null means the source is executed directly. */
+  compile: string[] | null;
+  extra: string[];
+  run: (memoryMb: number) => string[];
+  pids: number;
+}
+
+const SPECS: Record<SourceLanguage, LangSpec> = {
+  python: {
+    image: 'python:3.12-alpine',
+    env: 'RUNNER_PYTHON_IMAGE',
+    source: 'main.py',
+    compile: null,
+    extra: [],
+    run: () => ['python', '/work/main.py'],
+    pids: 64,
+  },
+  javascript: {
+    image: 'node:22-alpine',
+    env: 'RUNNER_NODE_IMAGE',
+    source: 'main.js',
+    compile: null,
+    extra: [],
+    run: () => ['node', '/work/main.js'],
+    pids: 64,
+  },
+  c: {
+    image: 'gcc:14',
+    env: 'RUNNER_GCC_IMAGE',
+    source: 'main.c',
+    compile: ['gcc', '-O2', '-pipe', '-o', '/work/main', 'main.c'],
+    extra: [],
+    run: () => ['/work/main'],
+    pids: 64,
+  },
+  cpp: {
+    image: 'gcc:14',
+    env: 'RUNNER_GCC_IMAGE',
+    source: 'main.cpp',
+    compile: ['g++', '-O2', '-std=c++17', '-pipe', '-o', '/work/main', 'main.cpp'],
+    extra: [],
+    run: () => ['/work/main'],
+    pids: 64,
+  },
+  java: {
+    image: 'eclipse-temurin:21-jdk-alpine',
+    env: 'RUNNER_JAVA_IMAGE',
+    source: 'Main.java',
+    compile: ['javac', '-d', '/work', 'Main.java'],
+    extra: [],
+    run: (memoryMb) => [
+      'java',
+      `-Xmx${Math.max(64, memoryMb - 128)}m`,
+      '-Xss1m',
+      '-Djava.io.tmpdir=/tmp',
+      '-Duser.home=/tmp',
+      '-cp', '/work',
+      'Main',
+    ],
+    pids: 256,
+  },
+  go: {
+    image: 'golang:1.23-alpine',
+    env: 'RUNNER_GO_IMAGE',
+    source: 'main.go',
+    compile: ['go', 'build', '-o', '/work/main', 'main.go'],
+    extra: ['-e', 'CGO_ENABLED=0', '-e', 'GO111MODULE=off', '-e', 'GOCACHE=/tmp/gocache', '-e', 'GOPATH=/tmp/gopath'],
+    run: () => ['/work/main'],
+    pids: 64,
+  },
 };
 
+function spec(language: SourceLanguage): LangSpec {
+  const row = SPECS[language];
+  return { ...row, image: process.env[row.env] ?? row.image };
+}
+
 export function dockerArgs(req: RunRequest, workDir: string, name = containerName()): string[] {
-  const file = req.language === 'python' ? 'main.py' : 'main.js';
-  const program = req.language === 'python' ? ['python', `/work/${file}`] : ['node', `/work/${file}`];
-  const cmd = ['timeout', '-s', 'KILL', String(Math.ceil(req.timeMs / 1000) + 2), ...program];
+  const lang = spec(req.language);
+  const seconds = String(Math.ceil(req.timeMs / 1000) + 2);
   return [
     'run', '--rm',
     '--name', name,
     '--network', 'none',
     '--read-only',
-    '--tmpfs', '/tmp:size=16m',
+    '--tmpfs', '/tmp:size=64m',
     '--memory', `${req.memoryMb}m`,
     '--memory-swap', `${req.memoryMb}m`,
     '--cpus', '1',
-    '--pids-limit', '64',
+    '--pids-limit', String(lang.pids),
     '--user', '65534:65534',
     '--cap-drop', 'ALL',
     '--security-opt', 'no-new-privileges',
     '-v', `${workDir}:/work:ro`,
     '-i',
-    IMAGES[req.language],
-    ...cmd,
+    lang.image,
+    'timeout', '-s', 'KILL', seconds,
+    ...lang.run(req.memoryMb),
+  ];
+}
+
+function compileArgs(language: SourceLanguage, workDir: string, name: string): string[] {
+  const lang = spec(language);
+  return [
+    'run', '--rm',
+    '--name', name,
+    '--network', 'none',
+    '--read-only',
+    '--tmpfs', '/tmp:size=256m',
+    '--memory', '512m',
+    '--memory-swap', '512m',
+    '--cpus', '1',
+    '--pids-limit', '256',
+    '--cap-drop', 'ALL',
+    '--security-opt', 'no-new-privileges',
+    '-v', `${workDir}:/work`,
+    '-w', '/work',
+    ...lang.extra,
+    lang.image,
+    'timeout', '-s', 'KILL', '30',
+    ...(lang.compile ?? []),
   ];
 }
 
 export async function runInDocker(req: RunRequest): Promise<RunOutcome> {
   const dir = await mkdtemp(path.join(tmpdir(), 'cc-run-'));
-  const file = req.language === 'python' ? 'main.py' : 'main.js';
+  const lang = spec(req.language);
   try {
-    await writeFile(path.join(dir, file), req.code, 'utf8');
+    await writeFile(path.join(dir, lang.source), req.code, 'utf8');
+    if (lang.compile) {
+      const name = containerName();
+      const compiled = await execDocker(compileArgs(req.language, dir, name), name, '', 30_000, 8_000);
+      if (compiled.timedOut || compiled.exitCode !== 0) {
+        const detail = (compiled.stderr || compiled.stdout || 'compilation failed').slice(0, 500);
+        return { verdict: 'CE', reason: compiled.timedOut ? 'compilation timed out' : detail, stdout: '', stderr: compiled.stderr };
+      }
+    }
     const name = containerName();
     const outputLimit = req.outputLimit ?? 64_000;
     const result = await execDocker(dockerArgs(req, dir, name), name, req.stdin, req.timeMs, outputLimit);

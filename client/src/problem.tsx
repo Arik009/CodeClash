@@ -202,8 +202,13 @@ export function CodePanel({ draftKey, submit, run, blocked, label, onJudged, onL
 
   async function openFile(file: File) {
     setCode(await file.text());
-    if (file.name.endsWith('.js')) setLanguage('javascript');
-    if (file.name.endsWith('.py')) setLanguage('python');
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.js')) setLanguage('javascript');
+    if (name.endsWith('.py')) setLanguage('python');
+    if (name.endsWith('.c') || name.endsWith('.h')) setLanguage('c');
+    if (name.endsWith('.cpp') || name.endsWith('.cc') || name.endsWith('.cxx')) setLanguage('cpp');
+    if (name.endsWith('.java')) setLanguage('java');
+    if (name.endsWith('.go')) setLanguage('go');
   }
 
   const judging = verdict !== null && !verdict.verdict;
