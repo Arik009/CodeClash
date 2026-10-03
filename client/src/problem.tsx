@@ -113,12 +113,13 @@ export function ProblemView({ problem, index, language, editorial = 'toggle' }: 
   editorial?: 'toggle' | 'always';
 }) {
   const [open, setOpen] = useState(editorial === 'always');
+  const tags = Array.isArray(problem.tags) ? problem.tags : [];
   return (
     <article className="problem">
       <header className="problem-head">
         <h2>{index !== undefined ? `${letter(index)}. ` : ''}{problem.title}</h2>
         <LimitsLine limits={problem.limits} language={language} />
-        {problem.tags?.length ? <div className="row tags-line">{problem.tags.map((tag) => <span key={tag} className="chip">{tag}</span>)}</div> : null}
+        {tags.length ? <div className="row tags-line">{tags.map((tag, tagIndex) => <span key={`${tag}-${tagIndex}`} className="chip">{tag}</span>)}</div> : null}
       </header>
       <Statement text={problem.statement} />
       {problem.samples ? <Samples text={problem.samples} /> : null}

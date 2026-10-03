@@ -557,12 +557,13 @@ export function createApp(deps: AppDeps) {
     const tag = String(req.query.tag ?? '');
     const difficulty = String(req.query.difficulty ?? '');
     const status = String(req.query.status ?? '');
-    res.json(visible.filter((row) => (
-      (!q || String(row.title).toLowerCase().includes(q))
-      && (!tag || (row.tags as string[]).includes(tag))
-      && (!difficulty || row.difficulty === difficulty)
-      && (!status || row.status === status)
-    )));
+    res.json(visible.filter((row) => {
+      const tags = Array.isArray(row.tags) ? row.tags : [];
+      return (!q || String(row.title).toLowerCase().includes(q))
+        && (!tag || tags.includes(tag))
+        && (!difficulty || row.difficulty === difficulty)
+        && (!status || row.status === status);
+    }));
   }));
 
   app.get('/api/archive/:problemId', asyncRoute(async (req, res) => {

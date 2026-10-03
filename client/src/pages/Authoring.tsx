@@ -33,6 +33,11 @@ type Section = 'statement' | 'tests' | 'solutions' | 'agent';
 const EDITABLE = ['draft', 'blocked'];
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function tagList(tags: unknown): string[] {
+  const source = Array.isArray(tags) ? tags : [];
+  return source.map((tag) => String(tag).trim()).filter(Boolean);
+}
+
 export function Authoring() {
   const [params, setParams] = useSearchParams();
   const versionId = params.get('v') ?? '';
@@ -48,15 +53,17 @@ export function Authoring() {
   const [newDifficulty, setNewDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy');
   const [working, setWorking] = useState('');
   const [error, setError] = useState('');
+  const [tagText, setTagText] = useState('');
 
   const loadProblems = useCallback(() => api<ProblemRow[]>('/api/problems').then(setProblems), []);
   const loadVersion = useCallback(async (id: string) => {
-    if (!id) { setVersion(null); setProposals([]); return; }
+    if (!id) { setVersion(null); setProposals([]); setTagText(''); return; }
     const [next, props] = await Promise.all([
       api<Version>(`/api/problem-versions/${id}`),
       api<Proposal[]>(`/api/problem-versions/${id}/proposals`),
     ]);
-    setVersion(next);
+    setVersion({ ...next, tags: tagList(next.tags) });
+    setTagText(tagList(next.tags).join(', '));
     setProposals(props);
     setDirty(false);
   }, []);
@@ -93,6 +100,11 @@ export function Authoring() {
   function patch(change: Partial<Version>) {
     setVersion((current) => (current ? { ...current, ...change } : current));
     setDirty(true);
+  }
+
+  function onTags(value: string) {
+    setTagText(value);
+    patch({ tags: tagList(value.split(',')) });
   }
 
   async function createProblem(event: FormEvent) {
@@ -326,7 +338,7 @@ export function Authoring() {
                   <fieldset disabled={!editable || working !== ''}>
                       <div className="field-row">
                         <div><label htmlFor="title" style={{ marginTop: 0 }}>Title</label><input id="title" value={version.title} onChange={(e) => patch({ title: e.target.value })} /></div>
-                        <div><label htmlFor="tags" style={{ marginTop: 0 }}>Tags (comma separated)</label><input id="tags" value={version.tags.join(', ')} onChange={(e) => patch({ tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean) })} /></div>
+                        <div><label htmlFor="tags" style={{ marginTop: 0 }}>Tags (comma separated)</label><input id="tags" value={tagText} onChange={(e) => onTags(e.target.value)} /></div>
                         <div>
                           <label htmlFor="difficulty" style={{ marginTop: 0 }}>Difficulty</label>
                           <select id="difficulty" value={version.difficulty ?? 'medium'} onChange={(e) => patch({ difficulty: e.target.value as Version['difficulty'] })}>

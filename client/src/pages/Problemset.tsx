@@ -28,15 +28,22 @@ export function Problemset() {
   const status = params.get('status') ?? '';
 
   useEffect(() => {
-    const search = new URLSearchParams({ q: query, tag, difficulty, status });
-    api<ArchiveItem[]>(`/api/archive?${search}`).then(setItems).catch((e) => { setError(errorText(e)); setItems([]); });
-  }, [query, tag, difficulty, status]);
+    const search = new URLSearchParams({ q: query, difficulty, status });
+    let cancelled = false;
+    api<ArchiveItem[]>(`/api/archive?${search}`).then((rows) => {
+      if (!cancelled) setItems(rows);
+    }).catch((e) => {
+      if (!cancelled) { setError(errorText(e)); setItems([]); }
+    });
+    return () => { cancelled = true; };
+  }, [query, difficulty, status]);
 
   useEffect(() => {
     api<Me>('/api/me').then(setMe).catch(() => setMe(null));
   }, []);
 
-  const tags = useMemo(() => [...new Set((items ?? []).flatMap((item) => item.tags ?? []))].sort(), [items]);
+  const tags = useMemo(() => [...new Set((items ?? []).flatMap((item) => Array.isArray(item.tags) ? item.tags : []))].sort(), [items]);
+  const shown = (items ?? []).filter((item) => !tag || (Array.isArray(item.tags) && item.tags.includes(tag)));
 
   function update(next: { q?: string; tag?: string; difficulty?: string; status?: string }) {
     const merged = { q: query, tag, difficulty, status, ...next };
@@ -75,7 +82,7 @@ export function Problemset() {
             </div>
           ) : null}
           <div className="table-wrap">
-            {items === null ? <div className="box-body"><div className="skeleton" /></div> : items.length === 0 ? (
+            {items === null ? <div className="box-body"><div className="skeleton" /></div> : shown.length === 0 ? (
               <Empty icon={<BookOpenCheck size={28} />} title="No problem matches">Try another name, tag, or difficulty. Live contest problems stay hidden until results are published.</Empty>
             ) : (
               <table>
@@ -89,13 +96,13 @@ export function Problemset() {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item, index) => (
+                  {shown.map((item, index) => (
                     <tr key={item.versionId} className={item.status === 'solved' ? 'solved' : ''}>
                       <td className="muted num">{String(index + 1).padStart(3, '0')}</td>
                       <td>
                         <Link className="row-link" to={`/practice/${item.versionId}`}>{item.title}</Link>
                         <div className="row" style={{ gap: '0.3rem', marginTop: '0.25rem' }}>
-                          {(item.tags ?? []).map((t) => <button key={t} type="button" className={`chip ${tag === t ? 'on' : ''}`} onClick={() => update({ tag: t })}>{t}</button>)}
+                          {(Array.isArray(item.tags) ? item.tags : []).map((t) => <button key={t} type="button" className={`chip ${tag === t ? 'on' : ''}`} onClick={() => update({ tag: t })}>{t}</button>)}
                         </div>
                       </td>
                       <td><span className={`pill ${item.difficulty === 'easy' ? 'ok' : item.difficulty === 'hard' ? 'bad' : ''}`}>{item.difficulty ?? 'medium'}</span></td>
