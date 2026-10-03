@@ -2,7 +2,7 @@ import type { SourceLanguage } from '@codeclash/shared';
 import AdmZip from 'adm-zip';
 import { type Db, ObjectId } from 'mongodb';
 import { auditCollection } from '../db/audit.js';
-import { HttpError } from './errors.js';
+import { HttpError, isDuplicateKey } from './errors.js';
 
 export interface RunCaseInput {
   language: SourceLanguage;
@@ -122,45 +122,107 @@ export async function runPublishCheck(db: Db, versionId: string, run: RunCase): 
   return applyPublishReport(db, versionId, report);
 }
 
-export async function approveProposal(db: Db, proposalId: string, actorId: string) {
-  const proposal = await db.collection('proposals').findOne({ _id: new ObjectId(proposalId), status: 'held' });
-  if (!proposal) throw new HttpError(404, 'Proposal is not waiting');
-  const version = await db.collection('problem_versions').findOne({ _id: proposal.problemVersionId });
-  if (!version) throw new HttpError(404, 'Version not found');
-  const latest = await db.collection('problem_versions').find({ problemId: version.problemId }).sort({ version: -1 }).limit(1).next();
-  const tests = [...((version.tests as unknown[]) ?? [])];
-  const wrongSolutions = [...((version.wrongSolutions as unknown[]) ?? [])];
-  if (proposal.kind === 'test') {
-    tests.push({ input: proposal.stdin ?? '', output: proposal.expected ?? '', hidden: true });
-  } else {
-    wrongSolutions.push({ label: 'agent', language: proposal.language, code: proposal.code });
+const EDITABLE = ['draft', 'blocked'];
+
+function normalizeInput(text: string) {
+  return text.replace(/\r\n/g, '\n').trim();
+}
+
+/**
+ * Approved proposals always land on the newest version of the problem: appended to it while it is
+ * still editable, otherwise copied into a fresh draft. Every other field is carried over unchanged.
+ */
+export async function approveProposals(db: Db, proposalIds: string[], actorId: string) {
+  if (proposalIds.length === 0) throw new HttpError(400, 'Pick at least one proposal');
+  const ids = proposalIds.map((id) => new ObjectId(id));
+  const session = db.client.startSession();
+  let versionId = '';
+  let before = '';
+  let summary = '';
+  try {
+    await session.withTransaction(async () => {
+      const proposals = await db.collection('proposals').find({ _id: { $in: ids }, status: 'held' }, { session }).toArray();
+      if (proposals.length !== ids.length) throw new HttpError(404, 'Proposal is not waiting');
+      const base = await db.collection('problem_versions').findOne({ _id: proposals[0]!.problemVersionId }, { session });
+      if (!base) throw new HttpError(404, 'Version not found');
+      const versionIds = new Set(proposals.map((p) => String(p.problemVersionId)));
+      const siblings = await db.collection('problem_versions')
+        .find({ _id: { $in: [...versionIds].map((id) => new ObjectId(id)) } }, { session, projection: { problemId: 1 } })
+        .toArray();
+      if (siblings.some((v) => String(v.problemId) !== String(base.problemId))) throw new HttpError(400, 'Proposals belong to different problems');
+      const latest = await db.collection('problem_versions')
+        .find({ problemId: base.problemId }, { session }).sort({ version: -1 }).limit(1).next();
+      if (!latest) throw new HttpError(404, 'Version not found');
+
+      const known = new Set(((latest.tests as { input: string }[]) ?? []).map((t) => normalizeInput(t.input)));
+      const tests: { input: string; output: string; hidden: boolean }[] = [];
+      const wrongSolutions: { label: string; language: string; code: string }[] = [];
+      for (const proposal of proposals) {
+        const type = (proposal.type ?? proposal.kind) as string;
+        if (type === 'wrong_solution') {
+          wrongSolutions.push({ label: `agent-${String(proposal._id).slice(-6)}`, language: proposal.language, code: proposal.code });
+          continue;
+        }
+        const input = String(proposal.input ?? proposal.stdin ?? '');
+        if (known.has(normalizeInput(input))) continue;
+        known.add(normalizeInput(input));
+        tests.push({ input, output: String(proposal.expected ?? ''), hidden: true });
+      }
+
+      if (EDITABLE.includes(latest.status as string)) {
+        const updated = await db.collection('problem_versions').updateOne(
+          { _id: latest._id, status: { $in: EDITABLE } },
+          {
+            $push: { tests: { $each: tests }, wrongSolutions: { $each: wrongSolutions } } as never,
+            $set: { status: 'draft', report: [] },
+          },
+          { session },
+        );
+        if (updated.matchedCount !== 1) throw new HttpError(409, 'The draft changed. Try again.');
+        versionId = String(latest._id);
+      } else {
+        const { _id, status: _status, report: _report, version, ...fields } = latest;
+        const inserted = await db.collection('problem_versions').insertOne({
+          ...fields,
+          version: (version as number) + 1,
+          tests: [...((latest.tests as unknown[]) ?? []), ...tests],
+          wrongSolutions: [...((latest.wrongSolutions as unknown[]) ?? []), ...wrongSolutions],
+          status: 'draft',
+          report: [],
+        }, { session });
+        versionId = String(inserted.insertedId);
+      }
+
+      const marked = await db.collection('proposals').updateMany(
+        { _id: { $in: ids }, status: 'held' },
+        { $set: { status: 'approved', approvedBy: actorId, approvedAt: new Date(), versionId: new ObjectId(versionId) } },
+        { session },
+      );
+      if (marked.modifiedCount !== ids.length) throw new HttpError(409, 'Another approval got there first');
+      before = String(latest._id);
+      summary = `${tests.length} test(s), ${wrongSolutions.length} wrong solution(s)`;
+    });
+  } catch (error) {
+    if (isDuplicateKey(error)) throw new HttpError(409, 'Another approval created the next draft first. Try again.');
+    throw error;
+  } finally {
+    await session.endSession();
   }
-  const inserted = await db.collection('problem_versions').insertOne({
-    problemId: version.problemId,
-    version: ((latest?.version as number) ?? version.version) + 1,
-    title: version.title,
-    statement: version.statement,
-    samples: version.samples,
-    editorial: version.editorial ?? '',
-    tags: version.tags ?? [],
-    limits: version.limits,
-    tests,
-    reference: version.reference,
-    wrongSolutions,
-    status: 'draft',
-    report: [],
-  });
-  await db.collection('proposals').updateOne({ _id: proposal._id }, { $set: { status: 'approved', approvedBy: actorId } });
+  // The audit database is a separate connection, so it cannot join the transaction.
   await auditCollection(db).insertOne({
     actor: actorId,
     actorType: 'user',
     action: 'proposal.approve',
-    target: proposalId,
+    target: proposalIds.join(','),
     decision: 'allow',
-    payload: { versionId: String(inserted.insertedId) },
+    payload: { before, after: versionId, reason: summary },
     at: new Date(),
   });
-  return { versionId: String(inserted.insertedId) };
+  return { versionId };
+}
+
+export async function approveProposal(db: Db, proposalId: string, actorId: string) {
+  return approveProposals(db, [proposalId], actorId);
 }
 
 /** A newly published version retires the older published one of the same problem. */

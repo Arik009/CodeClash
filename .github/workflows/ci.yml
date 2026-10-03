@@ -25,7 +25,10 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - name: Pull sandbox images
-        run: docker pull node:22-alpine && docker pull python:3.12-alpine
+        run: |
+          for image in node:22-alpine python:3.12-alpine gcc:14 eclipse-temurin:21-jdk-alpine golang:1.23-alpine; do
+            docker pull -q "$image"
+          done
       - name: Unit, integration and isolation tests with coverage
         run: npm run test:coverage
       - uses: actions/upload-artifact@v4

@@ -204,7 +204,7 @@ export function ContestRoom({ me }: { me: string | null }) {
             <span className="pill accent">quiz · {question.basePoints} pts</span>
             <span className="clock" style={{ fontSize: '1.2rem' }}>{quizOpen ? formatLeft(quizLeft) : 'closed'}</span>
           </div>
-          {quizOpen ? <div className="bar" style={{ marginTop: '0.6rem' }}><span style={{ width: `${Math.max(0, (quizLeft / (question.windowSec * 1000)) * 100)}%` }} /></div> : null}
+          {quizOpen ? <div className="bar" style={{ marginTop: 'var(--space-2)' }}><span style={{ width: `${Math.max(0, (quizLeft / (question.windowSec * 1000)) * 100)}%` }} /></div> : null}
           <p className="quiz-prompt">{question.prompt}</p>
           <div className="options">
             {question.options.map((option, index) => {

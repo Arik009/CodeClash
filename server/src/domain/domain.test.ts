@@ -5,7 +5,7 @@ import { ensureIndexes } from '../db/indexes.js';
 import { tickContests, transitionContest } from './contests.js';
 import { HttpError } from './errors.js';
 import { claimSubmission, commitVerdict, enqueueSubmission, latestPublished, publishedVersions, reclaimSubmission } from './judging.js';
-import { applyPublishReport, assertArchiveAccess, publishDecision, runPublishCheck, testsFromZip, approveProposal } from './problems.js';
+import { applyPublishReport, assertArchiveAccess, publishDecision, runPublishCheck, testsFromZip, approveProposal, approveProposals } from './problems.js';
 import { reserveSeat, seatInvariants, withdrawSeat } from './registration.js';
 import { awardFirstSolve, dispatchOutbox, leaderboard, recomputeStanding } from './scoring.js';
 import AdmZip from 'adm-zip';
@@ -35,10 +35,10 @@ async function openContest(capacity: number) {
     reserved: 0,
     waitlistSeq: 0,
     status: 'registration_open',
-    startsAt: new Date('2026-10-01T10:00:00Z'),
-    endsAt: new Date('2026-10-01T12:00:00Z'),
-    freezeAt: new Date('2026-10-01T11:00:00Z'),
-    registrationOpensAt: new Date('2026-10-01T09:00:00Z'),
+    startsAt: new Date(Date.now() + 3600_000),
+    endsAt: new Date(Date.now() + 3 * 3600_000),
+    freezeAt: new Date(Date.now() + 2 * 3600_000),
+    registrationOpensAt: new Date(Date.now() - 3600_000),
     scoringMode: 'icpc',
     problemIds: [],
   });
@@ -301,6 +301,85 @@ describe('problems', () => {
     const next = await db.collection('problem_versions').findOne({ _id: new ObjectId(approved.versionId) });
     expect(next?.status).toBe('draft');
     expect(next?.tests).toEqual([{ input: '4\n', output: '4\n', hidden: true }]);
+  });
+
+  describe('approving onto the latest version', () => {
+    const fields = {
+      title: 'Kept', statement: 's', samples: '', tags: ['dp'], difficulty: 'hard', editorial: 'e',
+      subtasks: [{ name: 'all', points: 100 }], limits: { python: { timeMs: 1500, memoryMb: 128 } },
+      inputSpec: 'n int 1..9', source: { name: 'Codeforces 1B', license: 'CC BY 4.0' },
+      reference: { language: 'python', code: 'print(1)' }, wrongSolutions: [{ label: 'w', language: 'python', code: 'x' }],
+    };
+    async function problemWith(status: string) {
+      const problemId = new ObjectId();
+      const v1 = await db.collection('problem_versions').insertOne({
+        problemId, version: 1, status, tests: [{ input: '1\n', output: '1\n', hidden: false }], ...fields,
+      });
+      const hold = async (input: string, extra: Record<string, unknown> = {}) => String((await db.collection('proposals').insertOne({
+        problemVersionId: v1.insertedId, type: 'test', input, expected: input, status: 'held', ...extra,
+      })).insertedId);
+      return { problemId, v1: v1.insertedId, hold };
+    }
+
+    it('appends to an editable draft and keeps every field, twice in a row', async () => {
+      const { v1, hold } = await problemWith('blocked');
+      const first = await approveProposals(db, [await hold('2\n'), await hold('3\n')], 'setter');
+      const second = await approveProposals(db, [await hold('4\n'), await hold('2\n')], 'setter');
+      expect(first.versionId).toBe(String(v1));
+      expect(second.versionId).toBe(String(v1));
+      const stored = await db.collection('problem_versions').findOne({ _id: v1 });
+      expect(stored).toMatchObject({ ...fields, status: 'draft', report: [] });
+      expect(stored!.tests.map((t: { input: string }) => t.input)).toEqual(['1\n', '2\n', '3\n', '4\n']);
+    });
+
+    it('copies a published version into a new draft, then appends to that draft', async () => {
+      const { problemId, v1, hold } = await problemWith('published');
+      const wrong = String((await db.collection('proposals').insertOne({
+        problemVersionId: v1, type: 'wrong_solution', language: 'python', code: 'print(2)', status: 'held',
+      })).insertedId);
+      const first = await approveProposals(db, [await hold('5\n'), wrong], 'setter');
+      expect(first.versionId).not.toBe(String(v1));
+      const draft = await db.collection('problem_versions').findOne({ _id: new ObjectId(first.versionId) });
+      expect(draft).toMatchObject({ ...fields, wrongSolutions: [...fields.wrongSolutions, expect.objectContaining({ code: 'print(2)' })], version: 2, status: 'draft' });
+      expect((await db.collection('problem_versions').findOne({ _id: v1 }))!.status).toBe('published');
+      const again = await approveProposals(db, [await hold('6\n')], 'setter');
+      expect(again.versionId).toBe(first.versionId);
+      expect(await db.collection('problem_versions').countDocuments({ problemId })).toBe(2);
+      const proposal = await db.collection('proposals').findOne({ _id: new ObjectId(wrong) });
+      expect(proposal).toMatchObject({ status: 'approved', approvedBy: 'setter' });
+    });
+
+    it('lets exactly one of two racing approvals of the same proposal win', async () => {
+      const { v1, hold } = await problemWith('draft');
+      const id = await hold('7\n');
+      const results = await Promise.allSettled([approveProposals(db, [id], 'a'), approveProposals(db, [id], 'b')]);
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const stored = await db.collection('problem_versions').findOne({ _id: v1 });
+      expect(stored!.tests.filter((t: { input: string }) => t.input === '7\n')).toHaveLength(1);
+    });
+
+    it('keeps both of two racing approvals onto a published version in one new draft', async () => {
+      const { problemId, hold } = await problemWith('published');
+      const [a, b] = [await hold('8\n'), await hold('9\n')];
+      const ids = [a, b];
+      const results = await Promise.allSettled(ids.map((id) => approveProposals(db, [id], 'setter')));
+      for (const [i, result] of results.entries()) {
+        if (result.status === 'fulfilled') continue;
+        expect(result.reason.status).toBe(409);
+        await approveProposals(db, [ids[i]!], 'setter');
+      }
+      const drafts = await db.collection('problem_versions').find({ problemId, status: 'draft' }).toArray();
+      expect(drafts).toHaveLength(1);
+      expect(drafts[0]!.tests.map((t: { input: string }) => t.input).sort()).toEqual(['1\n', '8\n', '9\n']);
+    });
+
+    it('rejects an empty list, proposals that are not waiting, and mixed problems', async () => {
+      await expect(approveProposals(db, [], 'x')).rejects.toMatchObject({ status: 400 });
+      await expect(approveProposals(db, [String(new ObjectId())], 'x')).rejects.toMatchObject({ status: 404 });
+      const one = await problemWith('draft');
+      const two = await problemWith('draft');
+      await expect(approveProposals(db, [await one.hold('1 1\n'), await two.hold('2 2\n')], 'x')).rejects.toMatchObject({ status: 400 });
+    });
   });
 
   it('scores a judged contest submission from the outbox into the sorted set', async () => {

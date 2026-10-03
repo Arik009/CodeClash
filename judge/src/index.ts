@@ -6,7 +6,7 @@ import { Redis } from 'ioredis';
 import { MongoClient, ObjectId } from 'mongodb';
 import { canTakePractice } from './slots.js';
 import { judgeCases, judgeSubtasks } from './decide.js';
-import { runInDocker } from './runner.js';
+import { judgeBatch, runInDocker } from './runner.js';
 
 const mongo = new MongoClient(process.env.MONGO_URL ?? 'mongodb://app:codeclash@127.0.0.1:27017/codeclash?replicaSet=rs0&authSource=codeclash');
 await mongo.connect();
@@ -17,6 +17,8 @@ const workerId = process.env.WORKER_ID ?? `worker-${hostname()}`;
 const slots = Math.max(1, Number(process.env.JUDGE_SLOTS ?? 4));
 const group = 'judges';
 const reclaimIdleMs = 60_000;
+/** A claim older than this belongs to a worker that died mid-job; it no longer holds a practice slot. */
+const inflightWindowMs = 5 * 60_000;
 
 for (const stream of ['judge:contest', 'judge:practice']) {
   try {
@@ -28,7 +30,7 @@ for (const stream of ['judge:contest', 'judge:practice']) {
 
 await db.collection('workers').updateOne(
   { name: workerId },
-  { $set: { name: workerId, slots, status: 'active', lastSeen: new Date() } },
+  { $set: { name: workerId, slots, status: 'active', lastSeen: new Date(), pid: process.pid, host: hostname() } },
   { upsert: true },
 );
 
@@ -51,14 +53,13 @@ async function handle(stream: string, id: string, submissionId: string) {
   const token = randomBytes(16).toString('hex');
   const claimed = await db.collection('submissions').findOneAndUpdate(
     { _id: new ObjectId(submissionId), status: { $in: ['queued', 'claimed', 'running'] } },
-    { $set: { status: 'claimed', claimToken: token, workerId } },
+    { $set: { status: 'claimed', claimToken: token, workerId, claimedAt: new Date() } },
     { returnDocument: 'after' },
   );
   if (!claimed) {
     await redis.xack(stream, group, id);
     return;
   }
-  if (claimed.kind === 'practice') await redis.incr('practice:inflight');
   try {
     const version = await db.collection('problem_versions').findOne({ _id: claimed.problemVersionId });
     const tests = (version?.tests as { input: string; output: string; group?: string }[]) ?? [];
@@ -67,14 +68,12 @@ async function handle(stream: string, id: string, submissionId: string) {
     const language = claimed.language as SourceLanguage;
     const limit = limits[language] ?? defaultLimit(language);
     await db.collection('submissions').updateOne({ _id: claimed._id, claimToken: token }, { $set: { status: 'running' } });
-    const run = (test: { input: string; output: string }) => runInDocker({
-      language,
-      code: claimed.code as string,
-      stdin: test.input,
-      expected: test.output,
-      timeMs: limit.timeMs,
-      memoryMb: limit.memoryMb,
-    });
+    const request = { language, code: claimed.code as string, timeMs: limit.timeMs, memoryMb: limit.memoryMb };
+    const batched = process.env.JUDGE_BATCH === '1'
+      ? new Map((await judgeBatch(request, tests)).map((outcome, i) => [tests[i]!, outcome]))
+      : null;
+    const run = async (test: { input: string; output: string }) => batched?.get(test)
+      ?? runInDocker({ ...request, stdin: test.input, expected: test.output });
     const result = subtasks.length > 0 ? await judgeSubtasks(tests, subtasks, run) : await judgeCases(tests, run);
     const points = 'points' in result ? result.points : result.verdict === 'AC' ? 100 : 0;
     const saved = await db.collection('submissions').updateOne(
@@ -99,7 +98,10 @@ async function handle(stream: string, id: string, submissionId: string) {
       await redis.xack(stream, group, id);
     }
   } finally {
-    if (claimed.kind === 'practice') await redis.decr('practice:inflight');
+    await db.collection('submissions').updateOne(
+      { _id: claimed._id, claimToken: token, status: { $in: ['claimed', 'running'] } },
+      { $unset: { claimedAt: '' } },
+    );
   }
 }
 
@@ -107,10 +109,14 @@ async function streamsToRead() {
   const [running, backlog, inflight] = await Promise.all([
     db.collection('contests').countDocuments({ status: { $in: ['running', 'frozen'] } }),
     db.collection('submissions').countDocuments({ kind: 'contest', status: 'queued' }),
-    redis.get('practice:inflight'),
+    db.collection('submissions').countDocuments({
+      kind: 'practice',
+      status: { $in: ['claimed', 'running'] },
+      claimedAt: { $gt: new Date(Date.now() - inflightWindowMs) },
+    }),
   ]);
   const streams = ['judge:contest'];
-  if (canTakePractice(slots, running > 0, Number(inflight ?? 0), backlog)) streams.push('judge:practice');
+  if (canTakePractice(slots, running > 0, inflight, backlog)) streams.push('judge:practice');
   return streams;
 }
 

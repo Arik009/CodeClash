@@ -1,5 +1,5 @@
-import { BookOpenCheck, Search } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { BookOpenCheck, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { Alert, Box, Empty, errorText } from '../ui';
@@ -8,54 +8,68 @@ interface ArchiveItem {
   problemId: string;
   versionId: string;
   title: string;
-  tags?: string[];
-  editorial?: string;
-  difficulty?: string;
-  acceptance?: number | null;
-  status?: 'solved' | 'attempted' | 'unsolved';
+  tags: string[];
+  difficulty: string;
+  rating: number | null;
+  source: string | null;
+  acceptance: number | null;
+  solvedCount: number;
+  status: 'solved' | 'attempted' | 'unsolved';
 }
+
+interface ArchivePage { items: ArchiveItem[]; total: number; page: number; pageSize: number; tags: string[] }
 
 interface Me { rating: number; streak: number; emailVerified: boolean }
 
+const PAGE_SIZE = 25;
+const TOP_TAGS = 12;
+
 export function Problemset() {
-  const [items, setItems] = useState<ArchiveItem[] | null>(null);
+  const [data, setData] = useState<ArchivePage | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState('');
+  const [allTags, setAllTags] = useState(false);
   const [params, setParams] = useSearchParams();
   const query = params.get('q') ?? '';
   const tag = params.get('tag') ?? '';
   const difficulty = params.get('difficulty') ?? '';
   const status = params.get('status') ?? '';
+  const page = Math.max(1, Number(params.get('page') ?? 1) || 1);
 
   useEffect(() => {
-    const search = new URLSearchParams({ q: query, difficulty, status });
+    const search = new URLSearchParams({ q: query, tag, difficulty, status, page: String(page), pageSize: String(PAGE_SIZE) });
     let cancelled = false;
-    api<ArchiveItem[]>(`/api/archive?${search}`).then((rows) => {
-      if (!cancelled) setItems(rows);
-    }).catch((e) => {
-      if (!cancelled) { setError(errorText(e)); setItems([]); }
-    });
-    return () => { cancelled = true; };
-  }, [query, difficulty, status]);
+    const timer = window.setTimeout(() => {
+      api<ArchivePage>(`/api/archive?${search}`).then((rows) => {
+        if (!cancelled) { setData(rows); setError(''); }
+      }).catch((e) => {
+        if (!cancelled) { setError(errorText(e)); setData({ items: [], total: 0, page: 1, pageSize: PAGE_SIZE, tags: [] }); }
+      });
+    }, query ? 180 : 0);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [query, tag, difficulty, status, page]);
 
   useEffect(() => {
     api<Me>('/api/me').then(setMe).catch(() => setMe(null));
   }, []);
 
-  const tags = useMemo(() => [...new Set((items ?? []).flatMap((item) => Array.isArray(item.tags) ? item.tags : []))].sort(), [items]);
-  const shown = (items ?? []).filter((item) => !tag || (Array.isArray(item.tags) && item.tags.includes(tag)));
-
-  function update(next: { q?: string; tag?: string; difficulty?: string; status?: string }) {
-    const merged = { q: query, tag, difficulty, status, ...next };
-    setParams(Object.fromEntries(Object.entries(merged).filter(([, value]) => value)), { replace: true });
+  function update(next: { q?: string; tag?: string; difficulty?: string; status?: string; page?: number }) {
+    const merged = { q: query, tag, difficulty, status, page: 1, ...next };
+    const entries = Object.entries(merged).filter(([key, value]) => value && !(key === 'page' && value === 1));
+    setParams(Object.fromEntries(entries.map(([key, value]) => [key, String(value)])), { replace: true });
   }
+
+  const items = data?.items ?? [];
+  const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  const first = data && data.total > 0 ? (data.page - 1) * data.pageSize + 1 : 0;
+  const last = data ? Math.min(data.total, data.page * data.pageSize) : 0;
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
           <h1>Problemset</h1>
-          <p>Problems from finished contests, plus practice problems that were never in a live round.</p>
+          <p>Problems from finished contests and the practice library, each with hidden tests and a verified reference solution.</p>
         </div>
         <div className="input-icon" style={{ width: 'min(20rem, 100%)' }}>
           <Search size={15} />
@@ -64,25 +78,31 @@ export function Problemset() {
       </div>
       {error ? <Alert>{error}</Alert> : null}
       <div className="with-side">
-        <div>
-          <div className="row" style={{ marginBottom: '0.6rem' }} role="group" aria-label="Filter by difficulty">
-            {['', 'easy', 'medium', 'hard'].map((item) => (
-              <button key={item || 'all'} type="button" className={`chip ${difficulty === item ? 'on' : ''}`} onClick={() => update({ difficulty: item })}>{item || 'any difficulty'}</button>
-            ))}
-            {['', 'solved', 'attempted', 'unsolved'].map((item) => (
-              <button key={`s-${item || 'any'}`} type="button" className={`chip ${status === item ? 'on' : ''}`} onClick={() => update({ status: item })}>{item || 'any status'}</button>
-            ))}
-          </div>
-          {tags.length > 0 ? (
-            <div className="row" style={{ marginBottom: '1rem' }} role="group" aria-label="Filter by tag">
-              <button type="button" className={`chip ${tag === '' ? 'on' : ''}`} onClick={() => update({ tag: '' })}>all tags</button>
-              {tags.map((item) => (
-                <button key={item} type="button" className={`chip ${tag === item ? 'on' : ''}`} onClick={() => update({ tag: tag === item ? '' : item })}>{item}</button>
+        <div className="stack">
+          <div className="filters">
+            <div className="row" role="group" aria-label="Filter by difficulty">
+              {['', 'easy', 'medium', 'hard'].map((item) => (
+                <button key={item || 'all'} type="button" className={`chip ${difficulty === item ? 'on' : ''}`} onClick={() => update({ difficulty: item })}>{item || 'any difficulty'}</button>
+              ))}
+              <span className="filters-sep" aria-hidden />
+              {['', 'solved', 'attempted', 'unsolved'].map((item) => (
+                <button key={`s-${item || 'any'}`} type="button" className={`chip ${status === item ? 'on' : ''}`} onClick={() => update({ status: item })}>{item || 'any status'}</button>
               ))}
             </div>
-          ) : null}
+            {data && data.tags.length > 0 ? (
+              <div className="row" role="group" aria-label="Filter by tag">
+                <button type="button" className={`chip ${tag === '' ? 'on' : ''}`} onClick={() => update({ tag: '' })}>all tags</button>
+                {(allTags ? data.tags : data.tags.slice(0, TOP_TAGS)).map((item) => (
+                  <button key={item} type="button" className={`chip ${tag === item ? 'on' : ''}`} onClick={() => update({ tag: tag === item ? '' : item })}>{item}</button>
+                ))}
+                {data.tags.length > TOP_TAGS ? (
+                  <button type="button" className="linkbtn small accent" onClick={() => setAllTags(!allTags)}>{allTags ? 'fewer' : `+${data.tags.length - TOP_TAGS} more`}</button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
           <div className="table-wrap">
-            {items === null ? <div className="box-body"><div className="skeleton" /></div> : shown.length === 0 ? (
+            {data === null ? <div className="box-body"><div className="skeleton" /></div> : items.length === 0 ? (
               <Empty icon={<BookOpenCheck size={28} />} title="No problem matches">Try another name, tag, or difficulty. Live contest problems stay hidden until results are published.</Empty>
             ) : (
               <table>
@@ -91,22 +111,28 @@ export function Problemset() {
                     <th style={{ width: '4rem' }}>#</th>
                     <th>name</th>
                     <th>difficulty</th>
+                    <th className="r">solved by</th>
                     <th className="r">accepted</th>
                     <th>you</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {shown.map((item, index) => (
+                  {items.map((item, index) => (
                     <tr key={item.versionId} className={item.status === 'solved' ? 'solved' : ''}>
-                      <td className="muted num">{String(index + 1).padStart(3, '0')}</td>
+                      <td className="muted num">{String(first + index).padStart(3, '0')}</td>
                       <td>
                         <Link className="row-link" to={`/practice/${item.versionId}`}>{item.title}</Link>
-                        <div className="row" style={{ gap: '0.3rem', marginTop: '0.25rem' }}>
-                          {(Array.isArray(item.tags) ? item.tags : []).map((t) => <button key={t} type="button" className={`chip ${tag === t ? 'on' : ''}`} onClick={() => update({ tag: t })}>{t}</button>)}
+                        <div className="row tag-row">
+                          {item.source ? <span className="muted small">{item.source}</span> : null}
+                          {item.tags.map((t) => <button key={t} type="button" className={`chip ${tag === t ? 'on' : ''}`} onClick={() => update({ tag: t })}>{t}</button>)}
                         </div>
                       </td>
-                      <td><span className={`pill ${item.difficulty === 'easy' ? 'ok' : item.difficulty === 'hard' ? 'bad' : ''}`}>{item.difficulty ?? 'medium'}</span></td>
-                      <td className="r num">{item.acceptance === null || item.acceptance === undefined ? '—' : `${item.acceptance}%`}</td>
+                      <td className="nowrap">
+                        <span className={`pill ${item.difficulty === 'easy' ? 'ok' : item.difficulty === 'hard' ? 'bad' : ''}`}>{item.difficulty}</span>
+                        {item.rating ? <span className="muted small num"> {item.rating}</span> : null}
+                      </td>
+                      <td className="r num">{item.solvedCount}</td>
+                      <td className="r num">{item.acceptance === null ? '—' : `${item.acceptance}%`}</td>
                       <td className="small">{item.status === 'solved' ? 'solved' : item.status === 'attempted' ? 'tried' : '—'}</td>
                     </tr>
                   ))}
@@ -114,11 +140,21 @@ export function Problemset() {
               </table>
             )}
           </div>
+          {data && data.total > 0 ? (
+            <nav className="pager" aria-label="Pages">
+              <span className="muted small num">{first}–{last} of {data.total}</span>
+              <div className="row">
+                <button type="button" className="btn sm" disabled={page <= 1} onClick={() => update({ page: page - 1 })} aria-label="Previous page"><ChevronLeft size={14} /></button>
+                <span className="small num">page {data.page} / {pages}</span>
+                <button type="button" className="btn sm" disabled={page >= pages} onClick={() => update({ page: page + 1 })} aria-label="Next page"><ChevronRight size={14} /></button>
+              </div>
+            </nav>
+          ) : null}
         </div>
         <aside className="side">
           <Box title="your record">
             {me ? (
-              <div className="stack" style={{ gap: '0.4rem' }}>
+              <div className="stack tight">
                 <div className="row between"><span className="muted small">rating</span><b className="num">{me.rating}</b></div>
                 <div className="row between"><span className="muted small">solve streak</span><b className="num">{me.streak} day{me.streak === 1 ? '' : 's'}</b></div>
                 <Link className="small" to="/profile">profile</Link>
@@ -127,6 +163,9 @@ export function Problemset() {
           </Box>
           <Box title="how scoring works">
             <p className="muted small" style={{ margin: 0 }}>Run samples checks the visible examples and records nothing. Submit judges the hidden tests. A problem with subtasks keeps the points of every group you fully solve.</p>
+          </Box>
+          <Box title="sources">
+            <p className="muted small" style={{ margin: 0 }}>Problems marked Codeforces come from the DeepMind CodeContests dataset (CC BY 4.0). Each was re-verified in our sandbox before import.</p>
           </Box>
         </aside>
       </div>

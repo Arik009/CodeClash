@@ -1,9 +1,10 @@
-import { Bot, Check, FilePlus2, FileUp, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-react';
+import { Bot, FilePlus2, FileUp, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api } from '../api';
+import { api, isAbort } from '../api';
 import { ProblemView } from '../problem';
 import { Alert, Editor, Empty, errorText, LANGUAGES, StatusPill, toast, type Language } from '../ui';
+import { Hardening } from './Hardening';
 
 interface ProblemRow { problemId: string; versionId: string; version: number; title: string; status: string }
 interface Test { input: string; output: string; hidden: boolean; group?: string }
@@ -23,12 +24,13 @@ interface Version {
   tests: Test[];
   reference: { language: Language; code: string } | null;
   wrongSolutions: Solution[];
+  inputSpec: string;
+  source: { name: string; url?: string; license?: string } | null;
   status: string;
   report: string[];
 }
-interface Proposal { id: string; kind: string; language: string; code: string; stdin: string; expected: string; status: string }
-interface AgentRun { status: string; reason: string | null; proposals: number; denied: string[] }
-type Section = 'statement' | 'tests' | 'solutions' | 'agent';
+interface SpecCheck { ok: boolean; parseError: string | null; failures: { test: number; error: string }[]; checked: number; drafted: string | null }
+type Section = 'statement' | 'tests' | 'spec' | 'solutions' | 'agent';
 
 const EDITABLE = ['draft', 'blocked'];
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -46,7 +48,8 @@ export function Authoring() {
   const [version, setVersion] = useState<Version | null>(null);
   const [dirty, setDirty] = useState(false);
   const [section, setSection] = useState<Section>('statement');
-  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [hardenRequest, setHardenRequest] = useState(0);
+  const [specCheck, setSpecCheck] = useState<SpecCheck | null>(null);
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newStatement, setNewStatement] = useState('');
@@ -56,15 +59,13 @@ export function Authoring() {
   const [tagText, setTagText] = useState('');
 
   const loadProblems = useCallback(() => api<ProblemRow[]>('/api/problems').then(setProblems), []);
-  const loadVersion = useCallback(async (id: string) => {
-    if (!id) { setVersion(null); setProposals([]); setTagText(''); return; }
-    const [next, props] = await Promise.all([
-      api<Version>(`/api/problem-versions/${id}`),
-      api<Proposal[]>(`/api/problem-versions/${id}/proposals`),
-    ]);
-    setVersion({ ...next, tags: tagList(next.tags) });
+  const loadVersion = useCallback(async (id: string, signal?: AbortSignal) => {
+    if (!id) { setVersion(null); setTagText(''); return; }
+    const next = await api<Version>(`/api/problem-versions/${id}`, { signal });
+    if (signal?.aborted) return;
+    setVersion({ ...next, tags: tagList(next.tags), inputSpec: next.inputSpec ?? '' });
     setTagText(tagList(next.tags).join(', '));
-    setProposals(props);
+    setSpecCheck(null);
     setDirty(false);
   }, []);
 
@@ -75,7 +76,11 @@ export function Authoring() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [creating]);
-  useEffect(() => { loadVersion(versionId).catch((e) => setError(errorText(e))); }, [versionId, loadVersion]);
+  useEffect(() => {
+    const controller = new AbortController();
+    loadVersion(versionId, controller.signal).catch((e) => { if (!isAbort(e)) setError(errorText(e)); });
+    return () => controller.abort();
+  }, [versionId, loadVersion]);
 
   function select(id: string) {
     if (dirty && !window.confirm('Discard unsaved changes?')) return;
@@ -129,7 +134,7 @@ export function Authoring() {
     return guarded('save', async () => {
       await api(`/api/problem-versions/${version.versionId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ title: version.title, statement: version.statement, samples: version.samples, editorial: version.editorial, tags: version.tags, difficulty: version.difficulty }),
+        body: JSON.stringify({ title: version.title, statement: version.statement, samples: version.samples, editorial: version.editorial, tags: version.tags, difficulty: version.difficulty, inputSpec: version.inputSpec }),
       });
       await api(`/api/problem-versions/${version.versionId}/tests`, {
         method: 'PUT',
@@ -174,35 +179,26 @@ export function Authoring() {
     });
   }
 
-  async function harden() {
-    if (!version) return;
+  function harden() {
+    if (dirty && !window.confirm('Hardening uses the saved version. Continue without saving?')) return;
     setSection('agent');
-    await guarded('harden', async () => {
-      const started = await api<{ runId: string }>(`/api/problem-versions/${version.versionId}/harden`, { method: 'POST' });
-      for (let i = 0; i < 120; i += 1) {
-        await sleep(1500);
-        const run = await api<AgentRun>(`/api/agent-runs/${started.runId}`);
-        if (run.status !== 'running') {
-          setProposals(await api<Proposal[]>(`/api/problem-versions/${version.versionId}/proposals`));
-          const denied = run.denied.length ? ` Denied: ${run.denied.join(', ')}.` : '';
-          toast(run.proposals ? `The agent proposed ${run.proposals} item(s) for review.${denied}` : `No proposals (${run.reason ?? 'none'}).${denied}`, run.proposals ? 'ok' : 'warn');
-          return;
-        }
-      }
-    });
+    setHardenRequest((n) => n + 1);
   }
 
-  async function decide(proposal: Proposal, verdict: 'approve' | 'reject') {
-    await guarded(verdict, async () => {
-      const result = await api<{ versionId?: string }>(`/api/proposals/${proposal.id}/${verdict}`, { method: 'POST' });
-      if (verdict === 'approve' && result.versionId) {
-        await loadProblems();
-        setDirty(false);
-        setParams({ v: result.versionId });
-        toast('Approved into a new draft version. Run the publish check to ship it.', 'ok');
-      } else if (version) {
-        setProposals(await api<Proposal[]>(`/api/problem-versions/${version.versionId}/proposals`));
-      }
+  async function approved(nextVersionId: string) {
+    await loadProblems();
+    setDirty(false);
+    if (nextVersionId === versionId) await loadVersion(nextVersionId);
+    else setParams({ v: nextVersionId });
+  }
+
+  async function checkSpec() {
+    if (!version) return;
+    await guarded('spec', async () => {
+      setSpecCheck(await api<SpecCheck>(`/api/problem-versions/${version.versionId}/spec-check`, {
+        method: 'POST',
+        body: JSON.stringify({ inputSpec: version.inputSpec }),
+      }));
     });
   }
 
@@ -218,7 +214,6 @@ export function Authoring() {
 
   const editable = version ? EDITABLE.includes(version.status) : false;
   const shown = problems.filter((p) => p.title.toLowerCase().includes(filter.toLowerCase()));
-  const held = proposals.filter((p) => p.status === 'held').length;
 
   return (
     <div className="page wide author-page">
@@ -306,7 +301,7 @@ export function Authoring() {
                 <div className="row">
                   {!editable && version.status !== 'checking' ? <button className="btn sm" type="button" onClick={newVersion} disabled={working !== ''}><Plus size={14} /> new version</button> : null}
                   <button className="btn sm" type="button" disabled={!editable || working !== '' || !dirty} onClick={save}><Save size={14} /> {working === 'save' ? 'saving…' : 'save'}</button>
-                  <button className="btn sm" type="button" disabled={!version.reference || working !== ''} onClick={harden}><Bot size={14} /> {working === 'harden' ? 'agent working…' : 'harden tests'}</button>
+                  <button className="btn sm" type="button" disabled={!version.reference || version.tests.length === 0 || working !== ''} onClick={harden}><Bot size={14} /> harden tests</button>
                   <button className="btn primary sm" type="button" disabled={!editable || !version.reference || working !== ''} onClick={publishCheck}>
                     <ShieldCheck size={14} /> {working === 'check' || version.status === 'checking' ? 'checking in sandbox…' : 'publish check'}
                   </button>
@@ -322,12 +317,12 @@ export function Authoring() {
               {!editable ? <Alert tone="info">This version is {version.status} and cannot change. {version.status !== 'checking' ? 'Start a new version to edit it.' : 'Wait for the check to finish.'}</Alert> : null}
 
               <nav className="tabs" role="tablist" aria-label="Sections">
-                {([['statement', 'statement'], ['tests', `tests`], ['solutions', 'solutions'], ['agent', 'agent']] as const).map(([key, name]) => (
+                {([['statement', 'statement'], ['tests', 'tests'], ['spec', 'spec'], ['solutions', 'solutions'], ['agent', 'hardening']] as const).map(([key, name]) => (
                   <button key={key} type="button" role="tab" aria-selected={section === key} className={`tab ${section === key ? 'on' : ''}`} onClick={() => setSection(key)}>
                     {name}
                     {key === 'tests' ? <span className="count">{version.tests.length}</span> : null}
+                    {key === 'spec' && !version.inputSpec.trim() ? <span className="count">none</span> : null}
                     {key === 'solutions' ? <span className="count">{(version.reference ? 1 : 0) + version.wrongSolutions.length}</span> : null}
-                    {key === 'agent' && held ? <span className="count">{held}</span> : null}
                   </button>
                 ))}
               </nav>
@@ -365,7 +360,7 @@ export function Authoring() {
               <fieldset disabled={!editable || working !== ''}>
                 {section === 'tests' ? (
                   <>
-                    <div className="row between" style={{ marginBottom: '0.75rem' }}>
+                    <div className="row between" style={{ marginBottom: 'var(--space-3)' }}>
                       <span className="muted small">Hidden tests are never shown to participants. Files named sample*.in stay visible.</span>
                       <div className="row">
                         <label className="btn sm file" style={{ margin: 0 }}>
@@ -382,7 +377,7 @@ export function Authoring() {
                             <span className="idx num">#{index + 1}</span>
                             <textarea aria-label={`Test ${index + 1} input`} placeholder="input" value={test.input} onChange={(e) => patch({ tests: version.tests.map((t, i) => (i === index ? { ...t, input: e.target.value } : t)) })} />
                             <textarea aria-label={`Test ${index + 1} output`} placeholder="expected output" value={test.output} onChange={(e) => patch({ tests: version.tests.map((t, i) => (i === index ? { ...t, output: e.target.value } : t)) })} />
-                            <div className="stack" style={{ gap: '0.4rem' }}>
+                            <div className="stack tight">
                               <input aria-label={`Test ${index + 1} subtask`} placeholder="subtask" value={test.group ?? ''} onChange={(e) => patch({ tests: version.tests.map((t, i) => (i === index ? { ...t, group: e.target.value } : t)) })} />
                               <label className="check"><input type="checkbox" checked={test.hidden} onChange={(e) => patch({ tests: version.tests.map((t, i) => (i === index ? { ...t, hidden: e.target.checked } : t)) })} /> hidden</label>
                               <button className="btn danger sm" type="button" onClick={() => patch({ tests: version.tests.filter((_, i) => i !== index) })} aria-label={`Remove test ${index + 1}`}><Trash2 size={13} /></button>
@@ -391,7 +386,7 @@ export function Authoring() {
                         ))}
                       </div>
                     )}
-                    <div className="row between" style={{ marginTop: '1rem' }}>
+                    <div className="row between" style={{ marginTop: 'var(--space-4)' }}>
                       <p className="section-title" style={{ margin: 0 }}>Subtasks <span className="muted small">· a group scores only if every test in it passes</span></p>
                       <button className="btn sm" type="button" onClick={() => patch({ subtasks: [...(version.subtasks ?? []), { name: '', points: 10 }] })}><Plus size={14} /> add subtask</button>
                     </div>
@@ -402,6 +397,56 @@ export function Authoring() {
                       </div>
                     ))}
                   </>
+                ) : null}
+
+                {section === 'spec' ? (
+                  <div className="two">
+                    <div>
+                      <label htmlFor="spec" style={{ marginTop: 0 }}>Input spec · one line per input line</label>
+                      <textarea
+                        id="spec"
+                        className="mono-area"
+                        spellCheck={false}
+                        value={version.inputSpec}
+                        onChange={(e) => { patch({ inputSpec: e.target.value }); setSpecCheck(null); }}
+                        placeholder={'n int 1..2*10^5\na int[n] -10^9..10^9'}
+                        style={{ minHeight: '12rem' }}
+                      />
+                      <div className="row" style={{ marginTop: 'var(--space-2)' }}>
+                        <button className="btn sm" type="button" onClick={checkSpec} disabled={working !== ''}><ShieldCheck size={14} /> {working === 'spec' ? 'checking…' : 'check against tests'}</button>
+                        {specCheck?.drafted && specCheck.drafted !== version.inputSpec.trim() ? (
+                          <button className="btn ghost sm" type="button" onClick={() => { patch({ inputSpec: specCheck.drafted! }); setSpecCheck(null); }}>use the spec drafted from the statement</button>
+                        ) : null}
+                      </div>
+                      {specCheck ? (
+                        specCheck.parseError ? <Alert tone="bad">{specCheck.parseError}</Alert>
+                          : specCheck.ok ? <Alert tone="ok">All {specCheck.checked} tests are valid under this spec.</Alert>
+                            : (
+                              <Alert tone="bad">
+                                <strong>{specCheck.failures.length} test(s) break this spec</strong>
+                                <ul>{specCheck.failures.map((f) => <li key={f.test}>test #{f.test}: {f.error}</li>)}</ul>
+                              </Alert>
+                            )
+                      ) : null}
+                    </div>
+                    <div className="spec-help small">
+                      <p className="label" style={{ marginTop: 0 }}>Syntax</p>
+                      <pre>{[
+                        'n int 1..2*10^5, k int 0..n   one line, two integers',
+                        'a int[n] -10^9..10^9          n integers on one line',
+                        's str[1..n] a-z               a string and its alphabet',
+                        'lines n-1: u int 1..n, v int 1..n',
+                        't int 1..10^4',
+                        'repeat t:                     the indented block, t times',
+                        '  n int 1..10^5',
+                        'sum n <= 2*10^5               over all repeats',
+                      ].join('\n')}</pre>
+                      <p className="muted">
+                        Hardening validates every generated or model-proposed input against this spec before it runs.
+                        Without one, it drafts a spec from the statement and keeps it only if every current test fits.
+                      </p>
+                    </div>
+                  </div>
                 ) : null}
 
                 {section === 'solutions' ? (
@@ -432,39 +477,15 @@ export function Authoring() {
               </fieldset>
 
               {section === 'agent' ? (
-                <>
-                  <Alert tone="info">
-                    The test-hardening agent reads the statement, runs code in the sandbox and proposes extra tests and wrong solutions.
-                    Nothing changes until you approve; approving creates a new draft version.
-                  </Alert>
-                  {proposals.length === 0 ? (
-                    <div className="table-wrap">
-                      <Empty icon={<Bot size={28} />} title={working === 'harden' ? 'The agent is working…' : 'No proposals yet'}>
-                        {working === 'harden' ? 'This takes a few seconds per sandbox run.' : version.reference ? 'Press “harden tests” in the toolbar.' : 'Add a reference solution first.'}
-                      </Empty>
-                    </div>
-                  ) : (
-                    <div className="stack">
-                      {proposals.map((p) => (
-                        <div key={p.id} className="proposal">
-                          <div className="proposal-head">
-                            <span className="row"><strong>{p.kind === 'test' ? 'test' : 'wrong solution'}</strong><span className="muted small">{p.language}</span></span>
-                            {p.status === 'held' ? (
-                              <div className="row">
-                                <button className="btn primary sm" type="button" disabled={working !== ''} onClick={() => decide(p, 'approve')}><Check size={13} /> approve</button>
-                                <button className="btn sm" type="button" disabled={working !== ''} onClick={() => decide(p, 'reject')}><X size={13} /> reject</button>
-                              </div>
-                            ) : <StatusPill status={p.status} label={p.status} />}
-                          </div>
-                          <div className="proposal-body">
-                            <div><p className="label" style={{ marginTop: 0 }}>{p.kind === 'test' ? 'input' : 'code'}</p><pre>{p.kind === 'test' ? p.stdin : p.code}</pre></div>
-                            <div><p className="label" style={{ marginTop: 0 }}>{p.kind === 'test' ? 'expected (from the reference)' : 'why'}</p><pre>{p.kind === 'test' ? p.expected : 'should fail at least one test'}</pre></div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
+                <Hardening
+                  problemId={version.problemId}
+                  versionId={version.versionId}
+                  hasReference={!!version.reference && version.tests.length > 0}
+                  startRequest={hardenRequest}
+                  onStartHandled={() => setHardenRequest(0)}
+                  onApproved={(id) => { void approved(id); }}
+                  onDraftSpec={(spec) => { patch({ inputSpec: spec }); setSection('spec'); }}
+                />
               ) : null}
               </div>
             </div>

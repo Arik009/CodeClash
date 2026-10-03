@@ -4,7 +4,7 @@ export function NotFound() {
   const { pathname } = useLocation();
   return (
     <div className="page narrow">
-      <div className="terminal" style={{ marginTop: '3rem' }}>
+      <div className="terminal" style={{ marginTop: 'var(--space-6)' }}>
         <div className="terminal-top"><i /><i /><i /><span>404</span></div>
         <pre>
           <span className="muted">$</span> cd {pathname}{'\n'}

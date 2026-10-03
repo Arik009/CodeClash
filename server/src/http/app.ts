@@ -1,4 +1,7 @@
-import { quizScore, streakBonus, defaultLimits, ROLES, SOURCE_LANGUAGES, type ContestStatus, type Role, type SourceLanguage } from '@codeclash/shared';
+import {
+  quizScore, streakBonus, defaultLimits, draftSpec, parseSpec, ROLES, SOURCE_LANGUAGES, SpecError, validateInput,
+  type ContestStatus, type Role,
+} from '@codeclash/shared';
 import { randomBytes } from 'node:crypto';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -9,11 +12,13 @@ import { auditCollection } from '../db/audit.js';
 import { transitionContest } from '../domain/contests.js';
 import { HttpError, isDuplicateKey } from '../domain/errors.js';
 import { enqueueSubmission, latestPublished, publishedVersions } from '../domain/judging.js';
-import { approveProposal, assertArchiveAccess, runPublishCheck, testsFromZip, type RunCase } from '../domain/problems.js';
+import { HARDEN_STREAM } from '@codeclash/agent/worker';
+import { providerFromEnv } from '@codeclash/agent/providers';
+import { approveProposals, assertArchiveAccess, runPublishCheck, testsFromZip, type RunCase } from '../domain/problems.js';
 import { reserveSeat, withdrawSeat } from '../domain/registration.js';
 import { leaderboard } from '../domain/scoring.js';
 import { checkPassword, hashPassword, issueRefresh, readAccess, revokeRefresh, rotateRefresh, signAccess } from './auth.js';
-import { assertVerified, newVerifyToken, problemStats, publicUser, rejudgeSubmissions, runSamples, solveRecord, verifyEmail } from '../domain/product.js';
+import { assertVerified, newVerifyToken, publicUser, rejudgeSubmissions, runSamples, solveRecord, verifyEmail } from '../domain/product.js';
 
 export interface AppDeps {
   db: Db;
@@ -57,6 +62,27 @@ function optionalAuth(req: Request) {
 }
 
 const STAFF: Role[] = ['setter', 'organiser', 'admin'];
+
+/** Max-size inputs can be a megabyte, so lists carry a preview and the length. */
+function proposalView(row: Record<string, unknown>) {
+  const input = String(row.input ?? row.stdin ?? '');
+  return {
+    id: String(row._id),
+    runId: row.runId ? String(row.runId) : null,
+    type: (row.type ?? row.kind) as string,
+    input: input.length > 4000 ? `${input.slice(0, 4000)}…` : input,
+    inputLength: input.length,
+    expected: String(row.expected ?? '').slice(0, 4000),
+    language: row.language ?? null,
+    code: row.code ?? '',
+    reason: row.reason ?? '',
+    source: row.source ?? 'deterministic',
+    attack: row.attack ?? null,
+    targetMutationId: row.targetMutationId ? String(row.targetMutationId) : null,
+    evidence: row.evidence ?? null,
+    status: row.status,
+  };
+}
 const STARTED = ['running', 'frozen', 'ended', 'published'];
 
 async function audit(
@@ -406,6 +432,7 @@ export function createApp(deps: AppDeps) {
   app.get('/api/problems', asyncRoute(async (req, res) => {
     requireRole(req, ['setter', 'admin']);
     const rows = await db.collection('problem_versions').aggregate([
+      { $project: { problemId: 1, version: 1, title: 1, status: 1 } },
       { $sort: { version: -1 } },
       { $group: { _id: '$problemId', doc: { $first: '$$ROOT' } } },
       { $replaceRoot: { newRoot: '$doc' } },
@@ -446,6 +473,8 @@ export function createApp(deps: AppDeps) {
       tests: latest?.tests ?? [],
       reference: latest?.reference ?? null,
       wrongSolutions: latest?.wrongSolutions ?? [],
+      inputSpec: latest?.inputSpec ?? '',
+      source: latest?.source ?? null,
       status: 'draft',
       report: [],
     });
@@ -471,6 +500,8 @@ export function createApp(deps: AppDeps) {
       tests: version.tests ?? [],
       reference: version.reference ?? null,
       wrongSolutions: version.wrongSolutions ?? [],
+      inputSpec: version.inputSpec ?? '',
+      source: version.source ?? null,
       status: version.status,
       report: version.report ?? [],
     });
@@ -485,13 +516,48 @@ export function createApp(deps: AppDeps) {
       editorial: z.string().optional(),
       tags: z.array(z.string()).optional(),
       difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
+      inputSpec: z.string().max(4000).optional(),
     }).parse(req.body);
+    if (body.inputSpec?.trim()) {
+      try {
+        parseSpec(body.inputSpec);
+      } catch (error) {
+        throw new HttpError(400, error instanceof SpecError ? `Input spec: ${error.message}` : 'Input spec does not parse');
+      }
+    }
     const updated = await db.collection('problem_versions').updateOne(
       { _id: new ObjectId(req.params.id), status: { $in: ['draft', 'blocked'] } },
       { $set: { ...body, status: 'draft' } },
     );
     if (updated.matchedCount === 0) throw new HttpError(409, 'Only draft or blocked versions can be edited');
     res.json({ ok: true });
+  }));
+
+  /** Checks a spec against every stored test, and drafts one from the statement for comparison. */
+  app.post('/api/problem-versions/:id/spec-check', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const body = z.object({ inputSpec: z.string().max(4000) }).parse(req.body);
+    const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(req.params.id) });
+    if (!version) throw new HttpError(404, 'Version not found');
+    const tests = (version.tests as { input: string }[]) ?? [];
+    const drafted = draftSpec(String(version.statement ?? ''), tests.map((t) => t.input));
+    if (!body.inputSpec.trim()) {
+      res.json({ ok: false, parseError: 'The spec is empty', failures: [], checked: 0, drafted });
+      return;
+    }
+    let spec;
+    try {
+      spec = parseSpec(body.inputSpec);
+    } catch (error) {
+      res.json({ ok: false, parseError: error instanceof SpecError ? error.message : 'does not parse', failures: [], checked: 0, drafted });
+      return;
+    }
+    const failures = tests
+      .map((test, index) => ({ test: index + 1, result: validateInput(spec, test.input) }))
+      .filter((row) => !row.result.ok)
+      .slice(0, 20)
+      .map((row) => ({ test: row.test, error: row.result.ok ? '' : row.result.error }));
+    res.json({ ok: failures.length === 0, parseError: null, failures, checked: tests.length, drafted });
   }));
 
   app.put('/api/problem-versions/:id/tests', asyncRoute(async (req, res) => {
@@ -531,39 +597,38 @@ export function createApp(deps: AppDeps) {
 
   app.get('/api/archive', asyncRoute(async (req, res) => {
     const viewer = optionalAuth(req);
-    const versions = await publishedVersions(db);
-    const visible = [];
-    for (const version of versions) {
-      if (await archiveOk(db, version.problemId)) {
-        const stats = await problemStats(db, version.problemId as ObjectId, viewer?.sub ?? null);
-        const stored = version.difficulty as string | undefined;
-        const difficulty = stored ?? (stats.acceptance === null ? 'medium' : stats.acceptance >= 70 ? 'easy' : stats.acceptance >= 40 ? 'medium' : 'hard');
-        visible.push({
-          problemId: String(version.problemId),
-          versionId: String(version._id),
-          title: version.title,
-          tags: version.tags ?? [],
-          statement: version.statement,
-          samples: version.samples,
-          editorial: version.editorial ?? '',
-          difficulty,
-          acceptance: stats.acceptance,
-          status: stats.status,
-          solvedCount: stats.solvedCount,
-        });
-      }
-    }
-    const q = String(req.query.q ?? '').trim().toLowerCase();
-    const tag = String(req.query.tag ?? '');
-    const difficulty = String(req.query.difficulty ?? '');
-    const status = String(req.query.status ?? '');
-    res.json(visible.filter((row) => {
-      const tags = Array.isArray(row.tags) ? row.tags : [];
-      return (!q || String(row.title).toLowerCase().includes(q))
-        && (!tag || tags.includes(tag))
-        && (!difficulty || row.difficulty === difficulty)
-        && (!status || row.status === status);
-    }));
+    const query = z.object({
+      q: z.string().default(''),
+      tag: z.string().default(''),
+      difficulty: z.string().default(''),
+      status: z.string().default(''),
+      page: z.coerce.number().int().min(1).default(1),
+      pageSize: z.coerce.number().int().min(1).max(100).default(50),
+    }).parse(req.query);
+    const rows = await archiveRows(db, viewer?.sub ?? null);
+    const q = query.q.trim().toLowerCase();
+    const matching = rows.filter((row) => (!q || row.title.toLowerCase().includes(q))
+      && (!query.tag || row.tags.includes(query.tag))
+      && (!query.difficulty || row.difficulty === query.difficulty)
+      && (!query.status || row.status === query.status));
+    const start = (query.page - 1) * query.pageSize;
+    res.json({
+      items: matching.slice(start, start + query.pageSize),
+      total: matching.length,
+      page: query.page,
+      pageSize: query.pageSize,
+      tags: tagsByUse(rows),
+    });
+  }));
+
+  app.get('/api/stats', asyncRoute(async (_req, res) => {
+    const [problems, participants, contests, judged] = await Promise.all([
+      archiveRows(db, null).then((rows) => rows.length),
+      db.collection('users').countDocuments({ role: 'participant' }),
+      db.collection('contests').countDocuments({ status: { $in: ['ended', 'published'] } }),
+      db.collection('submissions').estimatedDocumentCount(),
+    ]);
+    res.json({ problems, participants, contests, submissions: judged, languages: SOURCE_LANGUAGES.length });
   }));
 
   app.get('/api/archive/:problemId', asyncRoute(async (req, res) => {
@@ -595,6 +660,7 @@ export function createApp(deps: AppDeps) {
       limits: version.limits ?? null,
       subtasks: ((version.subtasks as { name: string; points: number }[]) ?? []).map((subtask) => ({ name: subtask.name, points: subtask.points })),
       editorial: version.editorial ?? '',
+      source: version.source ?? null,
     });
   }));
 
@@ -867,98 +933,153 @@ export function createApp(deps: AppDeps) {
     res.status(202).json({ status: 'checking' });
   }));
 
-  app.post('/api/problem-versions/:id/harden', asyncRoute(async (req, res) => {
+  /** The server only records and enqueues a run; the agent worker does the work. */
+  app.post('/api/problem-versions/:id/hardening-runs', asyncRoute(async (req, res) => {
     const user = requireRole(req, ['setter', 'admin']);
     const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(req.params.id) });
     if (!version) throw new HttpError(404, 'Version not found');
     if (!version.reference) throw new HttpError(400, 'Add a reference solution first');
-    const busy = await db.collection('agent_runs').findOne({ problemVersionId: version._id, status: 'running' });
-    if (busy) throw new HttpError(409, 'The agent is already working on this version');
-    const run = await db.collection('agent_runs').insertOne({ problemVersionId: version._id, status: 'running', actor: user.sub, at: new Date() });
-    const runId = run.insertedId;
-    const versionId = req.params.id;
-    background('harden', async () => {
-      try {
-        const { harden } = await import('@codeclash/agent/loop');
-        const { providerFromEnv } = await import('@codeclash/agent/providers');
-        const start = new Date();
-        start.setDate(1);
-        start.setHours(0, 0, 0, 0);
-        const usedRows = await auditCollection(db).aggregate([
-          { $match: { action: 'agent.tool', at: { $gte: start } } },
-          { $group: { _id: null, tokens: { $sum: '$payload.tokens' } } },
-        ]).toArray();
-        const sandbox = deps.runCase ?? runInSandbox;
-        const result = await harden({
-          provider: providerFromEnv({ samples: String(version.samples ?? '') }),
-          statement: String(version.statement ?? ''),
-          samples: String(version.samples ?? ''),
-          reference: version.reference as { language: SourceLanguage; code: string },
-          existingInputs: ((version.tests as { input: string }[]) ?? []).map((t) => t.input),
-          monthlyUsed: (usedRows[0]?.tokens as number) ?? 0,
-          monthlyCap: Number(process.env.AGENT_MONTHLY_TOKEN_CAP ?? 200_000),
-          runSandbox: async (code, language, stdin) => {
-            const outcome = await sandbox({ language, code, stdin, expected: '', timeMs: 2000, memoryMb: 256 });
-            return { verdict: outcome.verdict, stdout: outcome.stdout };
-          },
-          audit: async (row) => {
-            await auditCollection(db).insertOne({
-              actor: 'test-hardening-agent',
-              actorType: 'agent',
-              action: 'agent.tool',
-              target: versionId,
-              decision: row.decision,
-              payload: { tool: row.tool, model: row.model, tokens: row.tokens },
-              at: new Date(),
-            });
-          },
-        });
-        for (const proposal of result.proposals) {
-          await db.collection('proposals').insertOne({ ...proposal, problemVersionId: version._id, runId, createdAt: new Date() });
-        }
-        await db.collection('agent_runs').updateOne({ _id: runId }, { $set: { ...result, finishedAt: new Date() } });
-      } catch (error) {
-        await db.collection('agent_runs').updateOne(
-          { _id: runId },
-          { $set: { status: 'no_proposals', reason: 'error', proposals: [], denied: [], finishedAt: new Date() } },
-        );
-        throw error;
-      }
-    });
-    res.status(202).json({ runId: String(runId), status: 'running' });
+    if (!((version.tests as unknown[]) ?? []).length) throw new HttpError(400, 'Add at least one test first');
+    const now = new Date();
+    let runId: ObjectId;
+    try {
+      runId = (await db.collection('hardening_runs').insertOne({
+        problemId: version.problemId,
+        baseVersionId: version._id,
+        status: 'queued',
+        actor: user.sub,
+        createdAt: now,
+        updatedAt: now,
+      })).insertedId;
+    } catch (error) {
+      if (isDuplicateKey(error)) throw new HttpError(409, 'A hardening run is already queued or running for this version');
+      throw error;
+    }
+    try {
+      await deps.redis.xadd(HARDEN_STREAM, '*', 'runId', String(runId));
+    } catch {
+      await db.collection('hardening_runs').updateOne({ _id: runId }, { $set: { status: 'failed', error: 'The job queue is unavailable', finishedAt: new Date() } });
+      throw new HttpError(503, 'The job queue is unavailable; try again shortly');
+    }
+    await audit(db, user.sub, 'hardening.start', String(version._id), 'allow', { after: String(runId) });
+    res.status(202).json({ runId: String(runId), status: 'queued' });
   }));
 
-  app.get('/api/agent-runs/:id', asyncRoute(async (req, res) => {
+  app.get('/api/problems/:id/hardening-runs', asyncRoute(async (req, res) => {
     requireRole(req, ['setter', 'admin']);
-    const run = await db.collection('agent_runs').findOne({ _id: new ObjectId(req.params.id) });
+    const rows = await db.collection('hardening_runs')
+      .find({ problemId: new ObjectId(req.params.id) })
+      .project({ metrics: 1, status: 1, aiStatus: 1, baseVersionId: 1, createdAt: 1, finishedAt: 1, proposals: 1 })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .toArray();
+    res.json(rows.map((run) => ({
+      id: String(run._id),
+      baseVersionId: String(run.baseVersionId),
+      status: run.status,
+      aiStatus: run.aiStatus ?? null,
+      score: run.metrics?.score ?? null,
+      proposals: run.proposals ?? 0,
+      createdAt: run.createdAt,
+      finishedAt: run.finishedAt ?? null,
+    })));
+  }));
+
+  app.get('/api/hardening-runs/:id', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const run = await db.collection('hardening_runs').findOne({ _id: new ObjectId(req.params.id) });
     if (!run) throw new HttpError(404, 'Run not found');
+    const [mutations, proposals] = await Promise.all([
+      db.collection('mutations').find({ runId: run._id }).project({ code: 0 }).sort({ _id: 1 }).toArray(),
+      db.collection('proposals').find({ runId: run._id }).sort({ _id: 1 }).toArray(),
+    ]);
     res.json({
       id: String(run._id),
+      problemId: String(run.problemId),
+      baseVersionId: String(run.baseVersionId),
       status: run.status,
-      reason: run.reason ?? null,
-      proposals: ((run.proposals as unknown[]) ?? []).length,
-      denied: run.denied ?? [],
+      stage: run.stage ?? null,
+      aiStatus: run.aiStatus ?? null,
+      metrics: run.metrics ?? null,
+      notes: run.notes ?? [],
+      draftedSpec: run.draftedSpec ?? null,
       calls: run.calls ?? 0,
+      tokens: run.tokens ?? 0,
+      error: run.error ?? null,
+      createdAt: run.createdAt,
+      startedAt: run.startedAt ?? null,
+      finishedAt: run.finishedAt ?? null,
+      mutations: mutations.map((m) => ({
+        id: String(m._id),
+        key: m.key,
+        operator: m.operator,
+        source: m.source,
+        description: m.description,
+        diff: m.diff ?? null,
+        status: m.status,
+        survivedRandom: m.survivedRandom ?? 0,
+        killedByProposalId: m.killedByProposalId ? String(m.killedByProposalId) : null,
+      })),
+      proposals: proposals.map(proposalView),
+    });
+  }));
+
+  app.post('/api/hardening-runs/:id/cancel', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['setter', 'admin']);
+    const updated = await db.collection('hardening_runs').updateOne(
+      { _id: new ObjectId(req.params.id), status: { $in: ['queued', 'running'] } },
+      { $set: { status: 'cancelled', finishedAt: new Date(), updatedAt: new Date() } },
+    );
+    if (updated.matchedCount === 0) throw new HttpError(409, 'Only a queued or running run can be cancelled');
+    await audit(db, user.sub, 'hardening.cancel', req.params.id, 'allow');
+    res.json({ status: 'cancelled' });
+  }));
+
+  app.post('/api/hardening-runs/:id/approve', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['setter', 'admin']);
+    const body = z.object({ proposalIds: z.array(z.string().regex(/^[0-9a-f]{24}$/)).min(1).max(50) }).parse(req.body);
+    const runId = new ObjectId(req.params.id);
+    const owned = await db.collection('proposals').countDocuments({ _id: { $in: body.proposalIds.map((id) => new ObjectId(id)) }, runId });
+    if (owned !== new Set(body.proposalIds).size) throw new HttpError(400, 'Every proposal must come from this run');
+    res.json(await approveProposals(db, [...new Set(body.proposalIds)], user.sub));
+  }));
+
+  app.get('/api/agent/status', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const config = providerFromEnv();
+    const start = new Date();
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+    const used = await auditCollection(db).aggregate([
+      { $match: { action: 'agent.tool', at: { $gte: start } } },
+      { $group: { _id: null, tokens: { $sum: '$payload.tokens' } } },
+    ]).toArray();
+    const monthly = { used: (used[0]?.tokens as number) ?? 0, cap: Number(process.env.AGENT_MONTHLY_TOKEN_CAP ?? 200_000) };
+    const recent = await db.collection('hardening_runs')
+      .find({ aiStatus: { $in: ['RATE_LIMITED', 'ERROR'] }, finishedAt: { $gt: new Date(Date.now() - 15 * 60_000) } })
+      .sort({ finishedAt: -1 }).limit(1).next();
+    let status: string = config.status;
+    if (status === 'AVAILABLE' && monthly.used >= monthly.cap) status = 'BUDGET_EXCEEDED';
+    else if (status === 'AVAILABLE' && recent) status = recent.aiStatus as string;
+    res.json({
+      status,
+      provider: config.provider?.name ?? null,
+      model: config.provider?.model ?? null,
+      reason: config.reason,
+      monthly,
+      runTokenCap: Number(process.env.AGENT_RUN_TOKEN_CAP ?? 20_000),
     });
   }));
 
   app.get('/api/problem-versions/:id/proposals', asyncRoute(async (req, res) => {
     requireRole(req, ['setter', 'admin']);
-    const rows = await db.collection('proposals').find({ problemVersionId: new ObjectId(req.params.id) }).sort({ createdAt: -1 }).toArray();
-    res.json(rows.map((row) => ({
-      id: String(row._id),
-      kind: row.kind,
-      language: row.language,
-      code: row.code ?? '',
-      stdin: row.stdin ?? '',
-      expected: row.expected ?? '',
-      status: row.status,
-    })));
+    const rows = await db.collection('proposals').find({ problemVersionId: new ObjectId(req.params.id) }).sort({ createdAt: -1 }).limit(100).toArray();
+    res.json(rows.map(proposalView));
   }));
 
   app.post('/api/proposals/:id/approve', asyncRoute(async (req, res) => {
     const user = requireRole(req, ['setter', 'admin']);
-    res.json(await approveProposal(db, req.params.id, user.sub));
+    res.json(await approveProposals(db, [req.params.id], user.sub));
   }));
 
   app.post('/api/proposals/:id/reject', asyncRoute(async (req, res) => {
@@ -1052,7 +1173,70 @@ async function runInSandbox(input: Parameters<RunCase>[0]) {
   return runInDocker(input);
 }
 
-async function archiveOk(db: Db, problemId: ObjectId) {
-  const hidden = await db.collection('contests').countDocuments({ problemIds: problemId, status: { $ne: 'published' } });
-  return hidden === 0;
+interface ArchiveRow {
+  problemId: string;
+  versionId: string;
+  title: string;
+  tags: string[];
+  difficulty: string;
+  rating: number | null;
+  source: string | null;
+  acceptance: number | null;
+  solvedCount: number;
+  status: 'solved' | 'attempted' | 'unsolved';
+}
+
+function tagsByUse(rows: ArchiveRow[]) {
+  const uses = new Map<string, number>();
+  for (const tag of rows.flatMap((row) => row.tags)) uses.set(tag, (uses.get(tag) ?? 0) + 1);
+  return [...uses.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([tag]) => tag);
+}
+
+/** Latest published version of every problem not held by an unpublished contest, with stats, in three queries. */
+async function archiveRows(db: Db, viewerId: string | null): Promise<ArchiveRow[]> {
+  const [versions, held] = await Promise.all([
+    db.collection('problem_versions').aggregate([
+      { $match: { status: 'published' } },
+      { $sort: { version: -1 } },
+      { $group: { _id: '$problemId', doc: { $first: { _id: '$_id', title: '$title', tags: '$tags', difficulty: '$difficulty', rating: '$rating', source: '$source' } } } },
+    ]).toArray(),
+    db.collection('contests').distinct('problemIds', { status: { $ne: 'published' } }),
+  ]);
+  const hidden = new Set(held.map(String));
+  const visible = versions.filter((row) => !hidden.has(String(row._id)));
+  const ids = visible.map((row) => row._id as ObjectId);
+  const viewer = viewerId && ObjectId.isValid(viewerId) ? new ObjectId(viewerId) : null;
+  const stats = ids.length ? await db.collection('submissions').aggregate([
+    { $match: { problemId: { $in: ids }, verdict: { $ne: null } } },
+    {
+      $group: {
+        _id: '$problemId',
+        attempts: { $sum: 1 },
+        accepted: { $sum: { $cond: [{ $eq: ['$verdict', 'AC'] }, 1, 0] } },
+        mine: { $sum: { $cond: [{ $eq: ['$userId', viewer] }, 1, 0] } },
+        mineAc: { $sum: { $cond: [{ $and: [{ $eq: ['$userId', viewer] }, { $eq: ['$verdict', 'AC'] }] }, 1, 0] } },
+      },
+    },
+  ]).toArray() : [];
+  const byProblem = new Map(stats.map((row) => [String(row._id), row]));
+  return visible.map((row): ArchiveRow => {
+    const doc = row.doc as Record<string, unknown>;
+    const stat = byProblem.get(String(row._id));
+    const attempts = (stat?.attempts as number) ?? 0;
+    const accepted = (stat?.accepted as number) ?? 0;
+    const acceptance = attempts === 0 ? null : Math.round((100 * accepted) / attempts);
+    const source = doc.source as { platform?: string; contestId?: number; index?: string; name?: string } | undefined;
+    return {
+      problemId: String(row._id),
+      versionId: String(doc._id),
+      title: String(doc.title),
+      tags: Array.isArray(doc.tags) ? (doc.tags as string[]) : [],
+      difficulty: (doc.difficulty as string | undefined) ?? (acceptance === null ? 'medium' : acceptance >= 70 ? 'easy' : acceptance >= 40 ? 'medium' : 'hard'),
+      rating: typeof doc.rating === 'number' ? doc.rating : null,
+      source: source ? (source.platform ? `${source.platform} ${source.contestId ?? ''}${source.index ?? ''}`.trim() : source.name ?? null) : null,
+      acceptance,
+      solvedCount: accepted,
+      status: viewer && (stat?.mineAc as number) > 0 ? 'solved' : viewer && (stat?.mine as number) > 0 ? 'attempted' : 'unsolved',
+    };
+  }).sort((a, b) => a.title.localeCompare(b.title));
 }

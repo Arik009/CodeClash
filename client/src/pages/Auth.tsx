@@ -72,7 +72,7 @@ export function Auth({ onSession }: { onSession: (session: Session) => void }) {
               <label htmlFor="token">Verification token</label>
               <input id="token" value={token} onChange={(e) => setToken(e.target.value)} required autoComplete="one-time-code" />
               {error ? <Alert>{error}</Alert> : null}
-              <button className="btn primary lg" type="submit" disabled={busy} style={{ width: '100%', marginTop: '1rem' }}>
+              <button className="btn primary lg" type="submit" disabled={busy} style={{ width: '100%', marginTop: 'var(--space-4)' }}>
                 {busy ? 'please wait…' : 'Confirm email'} <ArrowRight size={16} />
               </button>
             </form>
@@ -110,7 +110,7 @@ export function Auth({ onSession }: { onSession: (session: Session) => void }) {
             </button>
           </div>
           {mode === 'register' ? <p className="hint">At least 8 characters.</p> : null}
-          <div style={{ marginTop: '1.25rem' }}>{error ? <Alert>{error}</Alert> : null}</div>
+          <div style={{ marginTop: 'var(--space-5)' }}>{error ? <Alert>{error}</Alert> : null}</div>
           <button className="btn primary lg" type="submit" disabled={busy} style={{ width: '100%' }}>
             {busy ? 'please wait…' : mode === 'login' ? 'Sign in' : 'Create account'} <ArrowRight size={16} />
           </button>

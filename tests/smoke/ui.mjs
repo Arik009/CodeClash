@@ -54,7 +54,7 @@ await page.locator('tr.me').waitFor({ timeout: 15000 });
 check('my row is highlighted in the standings', true, (await page.locator('tr.me').innerText()).replace(/\s+/g, ' '));
 await page.screenshot({ path: `${out}/flow-standings.png` });
 
-await page.getByTitle('Change theme').click();
+await page.getByRole('button', { name: /^Theme, / }).click();
 await page.getByRole('dialog', { name: 'Themes' }).waitFor();
 await page.waitForTimeout(400);
 await page.screenshot({ path: `${out}/flow-themes.png` });

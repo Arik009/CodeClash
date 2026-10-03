@@ -223,9 +223,9 @@ export function Control() {
                 <>
                   <div className="row between">
                     <label>Problems · {picked.size} picked, in this order become A, B, C…</label>
-                    <div className="input-icon" style={{ width: '14rem', marginTop: '0.6rem' }}><Search size={14} /><input aria-label="Search problems" placeholder="search" value={search} onChange={(e) => setSearch(e.target.value)} /></div>
+                    <div className="input-icon" style={{ width: '14rem', marginTop: 'var(--space-2)' }}><Search size={14} /><input aria-label="Search problems" placeholder="search" value={search} onChange={(e) => setSearch(e.target.value)} /></div>
                   </div>
-                  <div className="pick-list" style={{ marginTop: '0.5rem' }}>
+                  <div className="pick-list" style={{ marginTop: 'var(--space-2)' }}>
                     {shownCatalog.map((item) => (
                       <label key={item.problemId} className={picked.has(item.problemId) ? 'on' : ''}>
                         <input type="checkbox" checked={picked.has(item.problemId)} onChange={() => toggle(item.problemId)} />
@@ -237,7 +237,7 @@ export function Control() {
                   </div>
                 </>
               ) : null}
-              <button className="btn primary" type="submit" disabled={busy} style={{ marginTop: '1rem' }}><Plus size={14} /> {busy ? 'creating…' : startNow ? 'create and start' : 'create and open registration'}</button>
+              <button className="btn primary" type="submit" disabled={busy} style={{ marginTop: 'var(--space-4)' }}><Plus size={14} /> {busy ? 'creating…' : startNow ? 'create and start' : 'create and open registration'}</button>
             </form>
           </Box>
         </div>
@@ -245,7 +245,7 @@ export function Control() {
         <aside className="side">
           <Box title="quiz">
             {quizContests.length === 0 ? <p className="muted small" style={{ margin: 0 }}>No live quiz or mixed contest.</p> : (
-              <div className="stack" style={{ gap: '0.6rem' }}>
+              <div className="stack tight">
                 <select aria-label="Contest" value={selected} onChange={(e) => setSelected(e.target.value)}>
                   {quizContests.map((contest) => <option key={contest.id} value={contest.id}>{contest.title}</option>)}
                 </select>
@@ -257,7 +257,7 @@ export function Control() {
             )}
           </Box>
           <Box title="rejudge">
-            <form onSubmit={rejudge} className="stack" style={{ gap: '0.6rem' }}>
+            <form onSubmit={rejudge} className="stack tight">
               <select aria-label="Contest to rejudge" value={selected} onChange={(e) => setSelected(e.target.value)}>
                 {contests.filter((c) => c.status !== 'cancelled').map((contest) => <option key={contest.id} value={contest.id}>{contest.title}</option>)}
               </select>

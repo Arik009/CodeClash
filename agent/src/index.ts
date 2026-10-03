@@ -1,8 +1,8 @@
-import type { SourceLanguage } from '@codeclash/shared';
 import 'dotenv/config';
-import { MongoClient, ObjectId } from 'mongodb';
-import { harden } from './loop.js';
-import { providerFromEnv } from './providers.js';
+import { hostname } from 'node:os';
+import { Redis } from 'ioredis';
+import { MongoClient } from 'mongodb';
+import { HARDEN_STREAM, processRun } from './worker.js';
 
 const url = process.env.MONGO_URL ?? 'mongodb://app:codeclash@127.0.0.1:27017/codeclash?replicaSet=rs0&authSource=codeclash';
 const client = new MongoClient(url);
@@ -11,9 +11,17 @@ const db = client.db();
 const auditClient = new MongoClient(process.env.AUDIT_MONGO_URL ?? 'mongodb://auditWriter:codeclash@127.0.0.1:27017/codeclash_audit?replicaSet=rs0&authSource=codeclash_audit');
 await auditClient.connect();
 const auditDb = auditClient.db();
-const cap = Number(process.env.AGENT_MONTHLY_TOKEN_CAP ?? 200_000);
+const redis = new Redis(process.env.REDIS_URL ?? 'redis://127.0.0.1:6379');
+const group = 'hardeners';
+const consumer = `${process.env.WORKER_ID ?? hostname()}-agent-${process.pid}`;
 
-async function usedThisMonth() {
+try {
+  await redis.xgroup('CREATE', HARDEN_STREAM, group, '0', 'MKSTREAM');
+} catch (error) {
+  if (!String(error).includes('BUSYGROUP')) throw error;
+}
+
+async function monthlyUsed() {
   const start = new Date();
   start.setDate(1);
   start.setHours(0, 0, 0, 0);
@@ -24,52 +32,37 @@ async function usedThisMonth() {
   return (rows[0]?.tokens as number) ?? 0;
 }
 
-async function work(versionId: string) {
-  const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(versionId) });
-  if (!version?.reference) return;
-  const result = await harden({
-    provider: providerFromEnv({ samples: String(version.samples ?? '') }),
-    statement: String(version.statement ?? ''),
-    samples: String(version.samples ?? ''),
-    reference: version.reference as { language: SourceLanguage; code: string },
-    existingInputs: ((version.tests as { input: string }[]) ?? []).map((t) => t.input),
-    monthlyUsed: await usedThisMonth(),
-    monthlyCap: cap,
-    runSandbox: async (code, language, stdin) => {
-      const { runInDocker } = await import('@codeclash/judge/runner');
-      const outcome = await runInDocker({
-        language,
-        code,
-        stdin,
-        expected: '',
-        timeMs: 2000,
-        memoryMb: 256,
-      });
-      return { verdict: outcome.verdict, stdout: outcome.stdout };
-    },
-    audit: async (row) => {
-      await auditDb.collection('audit').insertOne({
-        actor: 'test-hardening-agent',
-        actorType: 'agent',
-        action: 'agent.tool',
-        target: versionId,
-        decision: row.decision,
-        payload: { tool: row.tool, model: row.model, tokens: row.tokens },
-        at: new Date(),
-      });
-    },
-  });
-  for (const proposal of result.proposals) {
-    await db.collection('proposals').insertOne({ ...proposal, problemVersionId: version._id, createdAt: new Date() });
-  }
-  await db.collection('agent_runs').insertOne({ problemVersionId: version._id, ...result, at: new Date() });
+const deps = {
+  db,
+  audit: async (row: Record<string, unknown>) => { await auditDb.collection('audit').insertOne(row); },
+  monthlyUsed,
+  runBatch: async (req: Parameters<typeof import('@codeclash/judge/runner').runBatch>[0]) => {
+    const { runBatch } = await import('@codeclash/judge/runner');
+    return runBatch(req);
+  },
+};
+
+type Entry = [string, string[]];
+function runIdOf(fields: string[]) {
+  for (let i = 0; i < fields.length; i += 2) if (fields[i] === 'runId') return fields[i + 1];
+  return undefined;
 }
 
-const id = process.argv[2];
-if (!id) {
-  console.log('agent idle; use Harden tests in authoring, or pass a problemVersionId');
-  await new Promise(() => {});
+async function handle(id: string, fields: string[]) {
+  const runId = runIdOf(fields);
+  if (runId) await processRun(deps, runId);
+  await redis.xack(HARDEN_STREAM, group, id);
 }
-await work(id);
-await client.close();
-await auditClient.close();
+
+console.log(`agent worker ${consumer} waiting on ${HARDEN_STREAM}`);
+for (;;) {
+  try {
+    const reply = await redis.xreadgroup('GROUP', group, consumer, 'COUNT', 1, 'BLOCK', 5000, 'STREAMS', HARDEN_STREAM, '>') as [string, Entry[]][] | null;
+    for (const [, messages] of reply ?? []) for (const [id, fields] of messages) await handle(id, fields);
+    const [, stale] = await redis.xautoclaim(HARDEN_STREAM, group, consumer, 5 * 60_000, '0-0', 'COUNT', 1) as [string, Entry[]];
+    for (const [id, fields] of stale ?? []) await handle(id, fields);
+  } catch (error) {
+    console.error('agent worker', error);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+}

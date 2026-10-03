@@ -86,7 +86,7 @@ export function Admin({ me }: { me: string }) {
 
       {tab === 'people' ? (
         <>
-          <form className="row" onSubmit={(e) => { e.preventDefault(); void run(() => loadUsers(userQuery)); }} style={{ marginBottom: '0.9rem' }}>
+          <form className="row" onSubmit={(e) => { e.preventDefault(); void run(() => loadUsers(userQuery)); }} style={{ marginBottom: 'var(--space-3)' }}>
             <div className="input-icon grow" style={{ maxWidth: '24rem' }}><Search size={14} /><input aria-label="Search people" placeholder="email or name" value={userQuery} onChange={(e) => setUserQuery(e.target.value)} /></div>
             <button className="btn" type="submit">search</button>
           </form>
@@ -115,7 +115,7 @@ export function Admin({ me }: { me: string }) {
 
       {tab === 'workers' ? (
         <>
-          <form onSubmit={register} className="row" style={{ marginBottom: '0.9rem' }}>
+          <form onSubmit={register} className="row" style={{ marginBottom: 'var(--space-3)' }}>
             <input aria-label="Worker name" value={name} onChange={(e) => setName(e.target.value)} style={{ maxWidth: '18rem' }} />
             <button className="btn primary" type="submit"><Plus size={14} /> register worker</button>
           </form>
@@ -141,13 +141,13 @@ export function Admin({ me }: { me: string }) {
               </table>
             )}
           </div>
-          <p className="muted small" style={{ marginTop: '0.75rem' }}>Drain lets running work finish and takes no new jobs. Evict hands unfinished work to another worker.</p>
+          <p className="muted small" style={{ marginTop: 'var(--space-3)' }}>Drain lets running work finish and takes no new jobs. Evict hands unfinished work to another worker.</p>
         </>
       ) : null}
 
       {tab === 'audit' ? (
         <>
-          <form className="row" onSubmit={(e) => { e.preventDefault(); void run(() => loadAudit(auditQuery)); }} style={{ marginBottom: '0.9rem' }}>
+          <form className="row" onSubmit={(e) => { e.preventDefault(); void run(() => loadAudit(auditQuery)); }} style={{ marginBottom: 'var(--space-3)' }}>
             <div className="input-icon grow" style={{ maxWidth: '24rem' }}><Search size={14} /><input aria-label="Search audit" placeholder="action, actor, target or decision" value={auditQuery} onChange={(e) => setAuditQuery(e.target.value)} /></div>
             <button className="btn" type="submit">search</button>
           </form>

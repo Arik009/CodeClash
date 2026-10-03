@@ -13,7 +13,7 @@ const login = await fetch(`${web}/api/auth/login`, {
 }).then((r) => r.json());
 const contests = await fetch(`${web}/api/contests`).then((r) => r.json());
 const live = contests.find((c) => c.status === 'running') ?? contests[0];
-const archive = await fetch(`${web}/api/archive`).then((r) => r.json());
+const archive = await fetch(`${web}/api/archive`).then((r) => r.json()).then((page) => page.items);
 const problems = await fetch(`${web}/api/problems`, { headers: { authorization: `Bearer ${login.access}` } }).then((r) => r.json());
 
 const browser = await chromium.launch(process.env.BROWSER_CHANNEL ? { channel: process.env.BROWSER_CHANNEL } : {});

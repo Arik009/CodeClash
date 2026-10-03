@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { expireRuns } from '@codeclash/agent/worker';
 import { createServer } from 'node:http';
 import { Redis } from 'ioredis';
 import { MongoClient } from 'mongodb';
@@ -21,7 +22,9 @@ await mongo.connect();
 const db = mongo.db();
 await ensureIndexes(db);
 await db.collection('problem_versions').updateMany({ status: 'checking' }, { $set: { status: 'blocked', report: ['check interrupted by a restart; run it again'] } });
-await db.collection('agent_runs').updateMany({ status: 'running' }, { $set: { status: 'no_proposals', reason: 'interrupted' } });
+setInterval(() => {
+  expireRuns(db).catch((error) => log.info({ err: error }, 'hardening timeouts'));
+}, 30_000);
 const auditClient = new MongoClient(auditUrl);
 await auditClient.connect();
 const auditDb = auditClient.db();

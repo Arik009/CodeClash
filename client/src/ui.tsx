@@ -1,6 +1,6 @@
 import { AlertTriangle, Check, CheckCircle2, Copy, Info, Loader2, X, XCircle } from 'lucide-react';
 import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { api } from './api';
+import { api, OFFLINE } from './api';
 
 const LazyEditor = lazy(() => import('./monaco'));
 
@@ -285,5 +285,6 @@ export function letter(index: number) {
 }
 
 export function errorText(error: unknown) {
+  if (error instanceof TypeError && /fetch/i.test(error.message)) return OFFLINE;
   return error instanceof Error ? error.message : 'Something went wrong';
 }

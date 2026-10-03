@@ -28,7 +28,7 @@ async function mockApi(page: Page) {
     } else if (path === '/api/contests') {
       await route.fulfill({ json: [contest()] });
     } else if (path === '/api/archive') {
-      await route.fulfill({ json: [] });
+      await route.fulfill({ json: { items: [], total: 0, page: 1, pageSize: 50, tags: [] } });
     } else if (path === '/api/contests/c1') {
       await route.fulfill({ json: contest() });
     } else if (path === '/api/contests/c1/seat') {
@@ -49,7 +49,7 @@ async function mockApi(page: Page) {
 test('landing offers sign in and paints the default theme', async ({ page }) => {
   await page.route('**/api/**', (route) => route.fulfill({ json: [] }));
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: /Seats/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Code\. Compete\. Conquer\./ })).toBeVisible();
   const bg = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim());
   expect(bg).toBe('#ffffff');
 });
@@ -73,7 +73,7 @@ test('core flow: sign in, reserve a seat, see the standing', async ({ page }) =>
 test('the theme picker switches and remembers the theme', async ({ page }) => {
   await page.route('**/api/**', (route) => route.fulfill({ json: [] }));
   await page.goto('/');
-  await page.getByTitle('Change theme').click();
+  await page.getByRole('button', { name: /^Theme, / }).click();
   await page.getByRole('button', { name: /Dracula/ }).click();
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dracula');
   await page.reload();

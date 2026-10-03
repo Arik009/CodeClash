@@ -34,7 +34,7 @@ let refreshing: Promise<Session | null> | null = null;
 /** One refresh at a time: parallel 401s share it, since the server rotates the token on use. */
 function refreshSession(session: Session) {
   refreshing ??= (async () => {
-    const response = await fetch('/api/auth/refresh', {
+    const response = await send('/api/auth/refresh', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ refresh: session.refresh }),
@@ -47,12 +47,32 @@ function refreshSession(session: Session) {
   return refreshing;
 }
 
+export const OFFLINE = 'Cannot reach the server. Is `npm run dev` running?';
+
+export function isAbort(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError';
+}
+
+/** Reads are retried once, since a dev server restart drops the connection for a moment. */
+async function send(path: string, init: RequestInit) {
+  const read = !init.method || init.method === 'GET';
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fetch(path, init);
+    } catch (error) {
+      if (isAbort(error)) throw error;
+      if (!read || attempt > 0) throw new Error(OFFLINE);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }
+  }
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const session = loadSession();
   const headers = new Headers(init.headers);
   if (init.body) headers.set('content-type', 'application/json');
   if (session) headers.set('authorization', `Bearer ${session.access}`);
-  let response = await fetch(path, { ...init, headers });
+  let response = await send(path, { ...init, headers });
   if (response.status === 401 && session && !path.startsWith('/api/auth/')) {
     const next = await refreshSession(session);
     if (!next) {
@@ -61,7 +81,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       throw new Error('Your session expired. Sign in again.');
     }
     headers.set('authorization', `Bearer ${next.access}`);
-    response = await fetch(path, { ...init, headers });
+    response = await send(path, { ...init, headers });
   }
   if (!response.ok) throw await readError(response);
   if (response.status === 204) return undefined as T;

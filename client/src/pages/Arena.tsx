@@ -29,7 +29,7 @@ export function Arena() {
 
   useEffect(() => {
     api<Contest[]>('/api/contests').then(setContests).catch((e) => { setError(errorText(e)); setContests([]); });
-    api<ArchiveItem[]>('/api/archive').then(setArchive).catch(() => setArchive([]));
+    api<{ items: ArchiveItem[] }>('/api/archive?pageSize=6').then((page) => setArchive(page.items)).catch(() => setArchive([]));
   }, []);
 
   const rows = contests ?? [];
@@ -115,7 +115,7 @@ export function Arena() {
           {live.length > 0 ? (
             <Box title="live now">
               {live.map((c) => (
-                <div key={c.id} className="stack" style={{ gap: '0.4rem' }}>
+                <div key={c.id} className="stack tight">
                   <div className="row between"><strong>{c.title}</strong><StatusPill status={c.status} /></div>
                   <div className="clock" style={{ fontSize: '1.3rem' }}>{formatLeft(new Date(c.endsAt).getTime() - now)}</div>
                   <div className="bar ok"><span style={{ width: `${progress(c, now)}%` }} /></div>

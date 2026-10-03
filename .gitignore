@@ -8,3 +8,4 @@ playwright-report
 test-results
 backups
 tests/smoke/screens
+.cache
