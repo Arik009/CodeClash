@@ -92,4 +92,7 @@ These do not need the Docker stack:
 npm run lint
 npm run typecheck
 npm test
+npx playwright test
 ```
+
+`BROWSER_CHANNEL=msedge npx playwright test` uses installed Edge instead of downloading Chromium.

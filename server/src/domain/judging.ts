@@ -112,6 +112,25 @@ export async function commitVerdict(
     { returnDocument: 'after' },
   );
   if (!updated) return null;
+  await db.collection('outbox').insertOne({
+    type: 'VerdictCommitted',
+    payload: {
+      submissionId,
+      contestId: updated.contestId ? String(updated.contestId) : null,
+      userId: String(updated.userId),
+      problemId: String(updated.problemId),
+      verdict,
+      kind: updated.kind,
+      submittedAt: updated.submittedAt,
+    },
+    createdAt: new Date(),
+    sentAt: null,
+  });
+  if (updated.kind === 'contest' && updated.contestId) {
+    const { recomputeStanding } = await import('./scoring.js');
+    await db.collection('submissions').updateOne({ _id: updated._id }, { $set: { status: 'scored' } });
+    await recomputeStanding(db, String(updated.contestId), String(updated.userId));
+  }
   return updated;
 }
 

@@ -9,6 +9,7 @@ import { HttpError } from '../domain/errors.js';
 import { enqueueSubmission, latestPublished, publishedVersions } from '../domain/judging.js';
 import { type RunCase } from '../domain/problems.js';
 import { reserveSeat, withdrawSeat } from '../domain/registration.js';
+import { leaderboard } from '../domain/scoring.js';
 import { checkPassword, hashPassword, issueRefresh, readAccess, revokeRefresh, rotateRefresh, signAccess } from './auth.js';
 import { assertVerified, newVerifyToken, publicUser, runSamples, verifyEmail } from '../domain/product.js';
 
@@ -440,6 +441,10 @@ export function createApp(deps: AppDeps) {
       await redis.xadd(queued.stream, '*', 'submissionId', queued.id);
     }
     res.status(queued.replay ? 200 : 202).json({ id: queued.id, replay: queued.replay });
+  }));
+
+  app.get('/api/contests/:id/leaderboard', asyncRoute(async (req, res) => {
+    res.json(await leaderboard(db, req.params.id));
   }));
 
   app.get('/api/admin/audit', asyncRoute(async (req, res) => {

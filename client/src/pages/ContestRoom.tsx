@@ -1,12 +1,22 @@
-import { ArrowLeft, Check, Clock, List, Lock, UserPlus, Users } from 'lucide-react';
+import { ArrowLeft, Check, Clock, List, Lock, Trophy, UserPlus, Users } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { io } from 'socket.io-client';
 import { api } from '../api';
 import { CodePanel, ProblemView, type Limits } from '../problem';
 import {
   Alert, Empty, errorText, formatLeft, formatWhen, LANGUAGES, letter, StatusPill, toast, useLanguage, useNow, VerdictText,
 } from '../ui';
 
+interface Cell { solved: boolean; tries: number; minute: number | null }
+interface BoardRow {
+  userId: string;
+  displayName: string;
+  solved: number;
+  penalty: number;
+  quizPoints: number;
+  cells?: Record<string, Cell>;
+}
 interface Problem { problemId: string; versionId: string; title: string; statement: string; samples: string; editorial: string | null; limits?: Limits }
 interface Contest {
   id: string;
@@ -26,7 +36,7 @@ interface Seat { seatId: string; status: string; position: number | null }
 interface MySubmission { id: string; problemId: string; language: string; status: string; verdict: string | null; submittedAt: string }
 
 const ACTIVE_SEAT = ['reserved', 'modified', 'competing'];
-type Tab = 'problems' | 'mine';
+type Tab = 'problems' | 'standings' | 'mine';
 
 export function ContestRoom({ me }: { me: string | null }) {
   const { id = '' } = useParams();
@@ -36,6 +46,7 @@ export function ContestRoom({ me }: { me: string | null }) {
   const [contest, setContest] = useState<Contest | null>(null);
   const [skew, setSkew] = useState(0);
   const [seat, setSeat] = useState<Seat | null>(null);
+  const [board, setBoard] = useState<BoardRow[]>([]);
   const [mine, setMine] = useState<MySubmission[]>([]);
   const [language, setLanguage] = useLanguage();
   const [error, setError] = useState('');
@@ -47,12 +58,20 @@ export function ContestRoom({ me }: { me: string | null }) {
   }).catch((e) => setError(errorText(e))), [id]);
   const loadSeat = useCallback(() => (me ? api<Seat | null>(`/api/contests/${id}/seat`).then(setSeat).catch(() => {}) : Promise.resolve()), [id, me]);
   const loadMine = useCallback(() => (me ? api<MySubmission[]>(`/api/contests/${id}/submissions/mine`).then(setMine).catch(() => {}) : Promise.resolve()), [id, me]);
+  const loadBoard = useCallback(() => api<BoardRow[]>(`/api/contests/${id}/leaderboard`).then(setBoard).catch(() => {}), [id]);
 
   useEffect(() => {
     void loadContest();
     void loadSeat();
     void loadMine();
-  }, [loadContest, loadSeat, loadMine]);
+    void loadBoard();
+    const socket = io();
+    socket.on('connect', () => socket.emit('join', id));
+    socket.on('leaderboard', (rows: BoardRow[]) => setBoard(rows));
+    socket.on('SeatChanged', () => { void loadSeat(); void loadContest(); });
+    socket.on('ContestStatus', () => { void loadContest(); void loadBoard(); });
+    return () => { socket.close(); };
+  }, [id, loadContest, loadSeat, loadMine, loadBoard]);
 
   function go(next: { tab?: Tab; p?: string }) {
     const merged = { tab, p: openLetter, ...next };
@@ -95,6 +114,7 @@ export function ContestRoom({ me }: { me: string | null }) {
   const tried = new Set(mine.filter((s) => s.verdict && s.verdict !== 'AC').map((s) => s.problemId));
   const problemIndex = openLetter ? openLetter.toUpperCase().charCodeAt(0) - 65 : -1;
   const problem = contest.problems[problemIndex] ?? null;
+  const solvedBy = (problemId: string) => board.filter((row) => row.cells?.[problemId]?.solved).length;
   const titleOf = (problemId: string) => {
     const index = contest.problems.findIndex((p) => p.problemId === problemId);
     return index >= 0 ? `${letter(index)}. ${contest.problems[index]!.title}` : '—';
@@ -145,6 +165,9 @@ export function ContestRoom({ me }: { me: string | null }) {
         <button type="button" role="tab" aria-selected={tab === 'problems'} className={`tab ${tab === 'problems' ? 'on' : ''}`} onClick={() => go({ tab: 'problems', p: '' })}>
           <List size={14} /> problems <span className="count">{contest.problemCount}</span>
         </button>
+        <button type="button" role="tab" aria-selected={tab === 'standings'} className={`tab ${tab === 'standings' ? 'on' : ''}`} onClick={() => go({ tab: 'standings', p: '' })}>
+          <Trophy size={14} /> standings <span className="count">{board.length}</span>
+        </button>
         {me ? (
           <button type="button" role="tab" aria-selected={tab === 'mine'} className={`tab ${tab === 'mine' ? 'on' : ''}`} onClick={() => go({ tab: 'mine', p: '' })}>
             my submissions <span className="count">{mine.length}</span>
@@ -164,7 +187,7 @@ export function ContestRoom({ me }: { me: string | null }) {
         ) : (
           <div className="table-wrap">
             <table>
-              <thead><tr><th style={{ width: '3.5rem' }}>#</th><th>name</th><th>limits</th></tr></thead>
+              <thead><tr><th style={{ width: '3.5rem' }}>#</th><th>name</th><th>limits</th><th className="r">solved by</th></tr></thead>
               <tbody>
                 {contest.problems.map((p, index) => {
                   const limit = p.limits?.[language] ?? { timeMs: 2000, memoryMb: 256 };
@@ -176,6 +199,7 @@ export function ContestRoom({ me }: { me: string | null }) {
                         {solved.has(p.problemId) ? <span className="ok small"> · solved</span> : tried.has(p.problemId) ? <span className="bad small"> · tried</span> : null}
                       </td>
                       <td className="muted small nowrap">{limit.timeMs / 1000} s, {limit.memoryMb} MB</td>
+                      <td className="r num"><Users size={12} className="muted" /> × {solvedBy(p.problemId)}</td>
                     </tr>
                   );
                 })}
@@ -230,6 +254,8 @@ export function ContestRoom({ me }: { me: string | null }) {
         </>
       ) : null}
 
+      {tab === 'standings' ? <Standings contest={contest} board={board} me={me} /> : null}
+
       {tab === 'mine' ? (
         mine.length === 0 ? <Empty title="No submissions yet">Open a problem and submit with Ctrl + Enter.</Empty> : (
           <div className="table-wrap">
@@ -257,6 +283,48 @@ export function ContestRoom({ me }: { me: string | null }) {
       ) : null}
     </div>
   );
+}
+
+function Standings({ contest, board, me }: { contest: Contest; board: BoardRow[]; me: string | null }) {
+  const problems = contest.problems;
+  if (board.length === 0) return <Empty icon={<Trophy size={28} />} title="No scores yet">Rows appear after the first judged submission.</Empty>;
+  return (
+    <>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th className="c" style={{ width: '3rem' }}>#</th>
+              <th>who</th>
+              <th className="c">=</th>
+              <th className="c">penalty</th>
+              {problems.map((p, index) => <th key={p.problemId} className="c upper" title={p.title}>{letter(index)}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {board.map((row, index) => (
+              <tr key={row.userId} className={row.userId === me ? 'me' : ''}>
+                <td className={`c rank ${index < 3 ? 'top' : ''}`}>{index + 1}</td>
+                <td><strong>{row.displayName}</strong>{row.userId === me ? <span className="muted small"> · you</span> : null}</td>
+                <td className="c"><strong>{row.solved}</strong></td>
+                <td className="c num muted">{row.penalty}</td>
+                {problems.map((p) => <td key={p.problemId} className="c"><StandingCell cell={row.cells?.[p.problemId]} /></td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+function StandingCell({ cell }: { cell?: Cell }) {
+  if (cell?.solved) {
+    const minute = cell.minute ?? 0;
+    return <span className="cell ok">{cell.tries ? `+${cell.tries}` : '+'}<small>{Math.floor(minute / 60)}:{String(minute % 60).padStart(2, '0')}</small></span>;
+  }
+  if (cell && cell.tries > 0) return <span className="cell bad">-{cell.tries}</span>;
+  return null;
 }
 
 function countdown(contest: Contest, now: number) {

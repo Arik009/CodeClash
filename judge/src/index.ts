@@ -58,6 +58,20 @@ async function handle(stream: string, id: string, submissionId: string) {
     { $set: { status: 'judged', verdict: result.verdict, reason: result.reason, judgedAt: new Date() } },
   );
   if (saved.matchedCount === 1) {
+    await db.collection('outbox').insertOne({
+      type: 'VerdictCommitted',
+      payload: {
+        submissionId,
+        contestId: claimed.contestId ? String(claimed.contestId) : null,
+        userId: String(claimed.userId),
+        problemId: String(claimed.problemId),
+        verdict: result.verdict,
+        kind: claimed.kind,
+        submittedAt: claimed.submittedAt,
+      },
+      createdAt: new Date(),
+      sentAt: null,
+    });
     await redis.xack(stream, group, id);
   }
 }

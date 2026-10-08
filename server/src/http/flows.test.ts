@@ -5,6 +5,7 @@ import { MongoClient, ObjectId, type Db } from 'mongodb';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ensureIndexes } from '../db/indexes.js';
+import { recomputeStanding } from '../domain/scoring.js';
 import type { RunCase } from '../domain/problems.js';
 import { createApp } from './app.js';
 
@@ -162,7 +163,7 @@ describe('contest lifecycle', () => {
     expect(hidden.body.problems).toEqual([]);
   });
 
-  it('runs: only a competing seat may submit', async () => {
+  it('runs: submissions, standings with problem cells, and the frozen board', async () => {
     await api('post', `/api/contests/${contestId}/transition`, organiser, { to: 'running' });
     expect(redis.published).toContain('contest:running');
     expect((await api('get', `/api/contests/${contestId}/seat`, neha.token)).body.status).toBe('competing');
@@ -177,6 +178,12 @@ describe('contest lifecycle', () => {
     expect((await api('get', `/api/submissions/${sent.body.id}`, ravi.token)).status).toBe(403);
     expect((await api('get', `/api/submissions/${sent.body.id}`, admin)).status).toBe(200);
     expect((await api('get', `/api/contests/${contestId}/submissions/mine`, neha.token)).body).toHaveLength(1);
+
+    await db.collection('submissions').updateOne({ _id: new ObjectId(sent.body.id) }, { $set: { status: 'scored', verdict: 'AC' } });
+    await recomputeStanding(db, contestId, neha.id);
+    const board = await api('get', `/api/contests/${contestId}/leaderboard`);
+    expect(board.body[0]).toMatchObject({ displayName: 'Neha', solved: 1 });
+    expect(board.body[0].cells[problemId]).toMatchObject({ solved: true, tries: 0 });
   });
 
   it('freezes, ends and publishes, then shows the editorial and returns the problem to the archive', async () => {

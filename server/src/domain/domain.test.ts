@@ -6,6 +6,7 @@ import { tickContests, transitionContest } from './contests.js';
 import { HttpError } from './errors.js';
 import { claimSubmission, commitVerdict, enqueueSubmission, reclaimSubmission } from './judging.js';
 import { reserveSeat, seatInvariants, withdrawSeat } from './registration.js';
+import { dispatchOutbox, leaderboard } from './scoring.js';
 
 let repl: MongoMemoryReplSet;
 let client: MongoClient;
@@ -168,6 +169,8 @@ describe('exactly once', () => {
     expect(fresh).not.toBeNull();
     const again = await commitVerdict(db, queued.id, 'token-b', 'AC', null);
     expect(again).toBeNull();
+    const board = await leaderboard(db, contestId);
+    expect(board[0]?.solved).toBe(1);
   });
 
   it('refuses a submission without a seat', async () => {
@@ -189,6 +192,49 @@ describe('exactly once', () => {
         kind: 'contest',
       }),
     ).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe('problems', () => {
+
+  it('scores a judged contest submission from the outbox into the sorted set', async () => {
+    const contestId = await openContest(10);
+    const uid = await user();
+    const problem = await db.collection('problems').insertOne({ title: 'p', statement: 's', samples: '', tags: [] });
+    const submission = await db.collection('submissions').insertOne({
+      userId: new ObjectId(uid),
+      contestId: new ObjectId(contestId),
+      problemId: problem.insertedId,
+      status: 'judged',
+      verdict: 'WA',
+      kind: 'contest',
+      submittedAt: new Date(),
+    });
+    await db.collection('outbox').insertOne({
+      type: 'VerdictCommitted',
+      payload: {
+        submissionId: String(submission.insertedId),
+        contestId,
+        userId: uid,
+        problemId: String(problem.insertedId),
+        verdict: 'WA',
+        kind: 'contest',
+        submittedAt: new Date(),
+      },
+      createdAt: new Date(),
+      sentAt: null,
+    });
+    const scores: Record<string, number> = {};
+    const events: string[] = [];
+    await dispatchOutbox(db, {
+      async set() { return 'OK'; },
+      async zadd(key, score, member) { scores[`${key}:${member}`] = score; return 1; },
+    }, (room, event) => { events.push(`${room}:${event}`); });
+    const stored = await db.collection('submissions').findOne({ _id: submission.insertedId });
+    expect(stored?.status).toBe('scored');
+    expect(scores[`lb:${contestId}:rank:${uid}`]).toBe(0);
+    expect(events.some((e) => e.endsWith(':leaderboard'))).toBe(true);
+    expect(events.some((e) => e.endsWith(':VerdictCommitted'))).toBe(false);
   });
 });
 

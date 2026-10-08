@@ -3,10 +3,12 @@ import { createServer } from 'node:http';
 import { Redis } from 'ioredis';
 import { MongoClient } from 'mongodb';
 import pino from 'pino';
+import { Server } from 'socket.io';
 import { setAuditDb } from './db/audit.js';
 import { ensureIndexes } from './db/indexes.js';
 import { tickContests } from './domain/contests.js';
 import { type RunCase } from './domain/problems.js';
+import { dispatchOutbox } from './domain/scoring.js';
 import { createApp } from './http/app.js';
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
@@ -39,6 +41,23 @@ const app = createApp({
 });
 
 const server = createServer(app);
+const io = new Server(server, { cors: { origin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173' } });
+io.on('connection', (socket) => {
+  socket.on('join', (contestId: string) => {
+    socket.join(`contest:${contestId}`);
+  });
+});
+
+setInterval(() => {
+  dispatchOutbox(
+    db,
+    {
+      set: (key, value) => redis.set(key, value),
+      zadd: (key, score, member) => redis.zadd(key, score, member),
+    },
+    (room, event, payload) => { io.to(room).emit(event, payload); },
+  ).catch((error) => log.info({ err: error }, 'outbox'));
+}, 300);
 
 async function runInSandbox(input: Parameters<RunCase>[0]) {
   const { runInDocker } = await import('@codeclash/judge/runner');

@@ -7,7 +7,9 @@ export async function ensureIndexes(db: Db) {
     { contestId: 1, userId: 1 },
     { unique: true, partialFilterExpression: { active: true } },
   );
+  await db.collection('standings').createIndex({ contestId: 1, userId: 1 }, { unique: true });
   await db.collection('submissions').createIndex({ status: 1, submittedAt: 1 });
+  await db.collection('outbox').createIndex({ sentAt: 1, createdAt: 1 });
   await db.collection('refresh_tokens').createIndex({ tokenHash: 1 }, { unique: true });
   await db.collection('refresh_tokens').createIndex({ family: 1 });
   await db.collection('refresh_tokens').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
