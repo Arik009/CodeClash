@@ -72,11 +72,11 @@ describe('seats', () => {
   it('gives exactly 200 seats to 400 distinct users and no duplicates', async () => {
     const contestId = await openContest(200);
     const ids = await mapPool(Array.from({ length: 400 }), 40, () => user());
-    const results = await mapPool(ids, 40, (id) => reserveSeat(db, contestId, id).catch((error: { status?: number }) => error));
-    const reserved = results.filter((r) => 'outcome' in r && r.outcome === 'reserved');
-    const full = results.filter((r) => 'status' in r && r.status === 409);
+    const results = await mapPool(ids, 40, (id) => reserveSeat(db, contestId, id));
+    const reserved = results.filter((r) => r.outcome === 'reserved');
+    const waitlisted = results.filter((r) => r.outcome === 'waitlisted');
     expect(reserved).toHaveLength(200);
-    expect(full).toHaveLength(200);
+    expect(waitlisted).toHaveLength(200);
     const again = await reserveSeat(db, contestId, ids[0]!);
     expect(again.outcome).toBe('existing');
     const inv = await seatInvariants(db, contestId);

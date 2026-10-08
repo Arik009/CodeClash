@@ -2,8 +2,9 @@ import { type ClientSession, type Db, ObjectId } from 'mongodb';
 import { HttpError, isDuplicateKey } from './errors.js';
 
 export interface ReserveResult {
-  outcome: 'reserved' | 'existing';
+  outcome: 'reserved' | 'waitlisted' | 'existing';
   seatId: string;
+  position?: number;
 }
 
 async function existingSeat(db: Db, contestId: ObjectId, userId: ObjectId, session: ClientSession) {
@@ -19,7 +20,7 @@ export async function reserveSeat(db: Db, contestId: string, userId: string): Pr
     await session.withTransaction(async () => {
       const held = await existingSeat(db, cid, uid, session);
       if (held) {
-        result = { outcome: 'existing', seatId: String(held._id) };
+        result = { outcome: 'existing', seatId: String(held._id), position: held.waitlistPos ?? undefined };
         return;
       }
       const updated = await db.collection('contests').findOneAndUpdate(
@@ -50,7 +51,24 @@ export async function reserveSeat(db: Db, contestId: string, userId: string): Pr
       if (!contest || !['registration_open', 'running'].includes(contest.status as string)) {
         throw new HttpError(409, 'Registration is not open');
       }
-      throw new HttpError(409, 'The contest is full');
+      const sequenced = await db.collection('contests').findOneAndUpdate(
+        { _id: cid },
+        { $inc: { waitlistSeq: 1 } },
+        { session, returnDocument: 'after' },
+      );
+      const position = sequenced?.waitlistSeq as number;
+      const inserted = await db.collection('seats').insertOne(
+        {
+          contestId: cid,
+          userId: uid,
+          status: 'waitlisted',
+          active: true,
+          waitlistPos: position,
+          createdAt: new Date(),
+        },
+        { session },
+      );
+      result = { outcome: 'waitlisted', seatId: String(inserted.insertedId), position };
     });
     if (!result) throw new HttpError(500, 'Reservation produced no result');
     return result;

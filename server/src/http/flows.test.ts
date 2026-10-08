@@ -145,14 +145,15 @@ describe('contest lifecycle', () => {
     expect((await api('get', '/api/contests')).body.map((c: { id: string }) => c.id)).toContain(contestId);
   });
 
-  it('opens registration and seats one, after which the contest is full', async () => {
+  it('opens registration, seats one and waitlists the next', async () => {
     expect((await api('post', `/api/contests/${contestId}/seats`, neha.token)).status).toBe(409);
     await api('post', `/api/contests/${contestId}/transition`, organiser, { to: 'registration_open' });
     expect((await api('post', `/api/contests/${contestId}/transition`, organiser, { to: 'published' })).status).toBe(409);
 
     const first = await api('post', `/api/contests/${contestId}/seats`, ravi.token);
     expect(first.status).toBe(201);
-    expect((await api('post', `/api/contests/${contestId}/seats`, neha.token)).status).toBe(409);
+    const second = await api('post', `/api/contests/${contestId}/seats`, neha.token);
+    expect(second.body.outcome).toBe('waitlisted');
 
     const hidden = await api('get', `/api/contests/${contestId}`, neha.token);
     expect(hidden.body.problems).toEqual([]);

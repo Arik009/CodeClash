@@ -57,8 +57,8 @@ export function ContestRoom({ me }: { me: string | null }) {
   async function reserve() {
     setError('');
     try {
-      await api(`/api/contests/${id}/seats`, { method: 'POST' });
-      toast('You are registered', 'ok');
+      const result = await api<{ outcome: string; position?: number }>(`/api/contests/${id}/seats`, { method: 'POST' });
+      toast(result.outcome === 'waitlisted' ? `Contest is full: you are #${result.position} on the waitlist` : 'You are registered', result.outcome === 'waitlisted' ? 'warn' : 'ok');
       await Promise.all([loadSeat(), loadContest()]);
     } catch (e) {
       setError(errorText(e));
@@ -103,6 +103,8 @@ export function ContestRoom({ me }: { me: string | null }) {
             <>
               <span className="pill ok"><Check size={12} /> {seat.status === 'competing' ? 'competing' : 'registered'}</span>
             </>
+          ) : seat?.status === 'waitlisted' ? (
+            <span className="pill warn">waitlist #{seat.position}</span>
           ) : canRegister ? (
             <><button className="btn primary sm" type="button" onClick={reserve}><UserPlus size={14} /> register</button><span className="muted small">{Math.max(0, contest.capacity - contest.reserved)} seats left</span></>
           ) : <span className="muted small">Registration is closed.</span>}
