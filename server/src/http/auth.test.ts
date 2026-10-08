@@ -98,6 +98,29 @@ describe('routes', () => {
     expect(afterReplay.status).toBe(401);
   });
 
+  it('answers 400 for a malformed id instead of 500', async () => {
+    const app = createApp({ db, redis });
+    const res = await request(app).get('/api/contests/not-an-id');
+    expect(res.status).toBe(400);
+  });
+
+  it('hides contest problems from participants until the contest starts', async () => {
+    const app = createApp({ db, redis });
+    const problem = await db.collection('problems').insertOne({ title: 'secret' });
+    await db.collection('problem_versions').insertOne({ problemId: problem.insertedId, version: 1, status: 'published', title: 'secret', statement: 's' });
+    const contest = await db.collection('contests').insertOne({
+      title: 'soon', type: 'coding', status: 'registration_open', capacity: 5, reserved: 0, waitlistSeq: 0,
+      startsAt: new Date(Date.now() + 3600_000), freezeAt: new Date(Date.now() + 5400_000), endsAt: new Date(Date.now() + 7200_000),
+      registrationOpensAt: new Date(), scoringMode: 'icpc', problemIds: [problem.insertedId],
+    });
+    const anonymous = await request(app).get(`/api/contests/${contest.insertedId}`);
+    expect(anonymous.body.problems).toEqual([]);
+    expect(anonymous.body.problemCount).toBe(1);
+    const admin = await signIn('admin@codeclash.local', 'codeclash');
+    const staff = await request(app).get(`/api/contests/${contest.insertedId}`).set('authorization', `Bearer ${admin}`);
+    expect(staff.body.problems).toHaveLength(1);
+  });
+
   it('lets an admin change a role and audits it', async () => {
     const app = createApp({ db, redis });
     const admin = await signIn('admin@codeclash.local', 'codeclash');

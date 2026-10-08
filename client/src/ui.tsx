@@ -130,6 +130,35 @@ export function VerdictText({ verdict, status }: { verdict: string | null; statu
   return <span className={`verdict ${verdict.toLowerCase()}`} title={verdict}>{VERDICT_NAMES[verdict] ?? verdict}</span>;
 }
 
+export const STATUS_LABEL: Record<string, string> = {
+  draft: 'draft',
+  registration_open: 'registration',
+  running: 'live',
+  frozen: 'frozen',
+  ended: 'ended',
+  published: 'final',
+  cancelled: 'cancelled',
+};
+
+const STATUS_TONE: Record<string, string> = {
+  registration_open: 'upcoming',
+  running: 'live',
+  frozen: 'frozen',
+  published: 'ok',
+  cancelled: 'bad',
+  checking: 'accent',
+  blocked: 'bad',
+  superseded: '',
+  active: 'ok',
+  draining: 'warn',
+  evicted: 'bad',
+  stale: '',
+};
+
+export function StatusPill({ status, label }: { status: string; label?: string }) {
+  return <span className={`pill ${STATUS_TONE[status] ?? ''}`}>{label ?? STATUS_LABEL[status] ?? status}</span>;
+}
+
 export function Box({ title, action, children, flush }: { title: string; action?: ReactNode; children: ReactNode; flush?: boolean }) {
   return (
     <section className="box">
@@ -231,6 +260,16 @@ export function formatLeft(ms: number) {
   if (d > 0) return `${d}d ${h}h`;
   const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
   return `${h > 0 ? `${h}:` : ''}${mm}:${String(s).padStart(2, '0')}`;
+}
+
+/** Contest length as hh:mm, the way contest tables show it. */
+export function formatLength(ms: number) {
+  const minutes = Math.round(ms / 60000);
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+export function formatWhen(value: string | Date) {
+  return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 export function letter(index: number) {

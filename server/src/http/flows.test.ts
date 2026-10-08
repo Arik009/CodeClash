@@ -38,6 +38,8 @@ function api(method: Method, path: string, token?: string, body?: unknown) {
   return body === undefined ? req : req.send(body as object);
 }
 
+let admin = '';
+let organiser = '';
 let neha = { token: '', id: '' };
 let ravi = { token: '', id: '' };
 let problemId = '';
@@ -50,6 +52,13 @@ async function signUp(email: string, displayName: string) {
     expect((await api('post', '/api/auth/verify', undefined, { token: res.body.verifyToken })).body.emailVerified).toBe(true);
   }
   return { token: res.body.access as string, id: res.body.user.id as string, refresh: res.body.refresh as string };
+}
+
+async function promote(email: string, role: string) {
+  const user = await signUp(email, role);
+  expect((await api('put', `/api/admin/users/${user.id}/role`, admin, { role })).status).toBe(200);
+  const login = await api('post', '/api/auth/login', undefined, { email, password: 'longpassword' });
+  return login.body.access as string;
 }
 
 beforeAll(async () => {
@@ -66,6 +75,8 @@ beforeAll(async () => {
     createdAt: new Date(),
   });
   app = createApp({ db, redis, runCase });
+  admin = (await api('post', '/api/auth/login', undefined, { email: 'admin@codeclash.local', password: 'codeclash' })).body.access;
+  organiser = await promote('organiser@example.com', 'organiser');
   neha = await signUp('neha@example.com', 'Neha');
   ravi = await signUp('ravi@example.com', 'Ravi');
 }, 180000);
@@ -125,6 +136,40 @@ describe('practice', () => {
     const ran = await api('post', '/api/run', neha.token, { problemVersionId: versionId, language: 'python', code: '# REF' });
     expect(ran.body.results[0].verdict).toBe('AC');
     expect(await db.collection('submissions').countDocuments({ code: '# REF' })).toBe(0);
+  });
+});
+
+describe('contest lifecycle', () => {
+  let contestId = '';
+  const minute = 60_000;
+
+  beforeAll(async () => {
+    const problem = await db.collection('problems').insertOne({ title: 'Double' });
+    const version = await db.collection('problem_versions').insertOne({
+      problemId: problem.insertedId, version: 1, status: 'published', title: 'Double', statement: 'Print twice n.',
+      samples: 'input\n4\noutput\n8\n', editorial: 'Multiply by two.', tags: ['math'],
+      tests: [{ input: '4\n', output: '8\n', hidden: false }, { input: '-3\n', output: '-6\n', hidden: true }],
+      limits: { python: { timeMs: 1000, memoryMb: 128 } },
+    });
+    problemId = String(problem.insertedId);
+    versionId = String(version.insertedId);
+  });
+
+  it('validates the schedule and creates a draft', async () => {
+    const base = {
+      title: 'Flow cup', type: 'mixed', capacity: 1, scoringMode: 'icpc', problemIds: [problemId],
+      registrationOpensAt: new Date(Date.now() - 10 * minute).toISOString(),
+      startsAt: new Date(Date.now() - 5 * minute).toISOString(),
+      freezeAt: new Date(Date.now() + 60 * minute).toISOString(),
+      endsAt: new Date(Date.now() + 120 * minute).toISOString(),
+    };
+    expect((await api('post', '/api/contests', neha.token, base)).status).toBe(403);
+    expect((await api('post', '/api/contests', organiser, { ...base, endsAt: base.startsAt })).status).toBe(400);
+    expect((await api('post', '/api/contests', organiser, { ...base, freezeAt: new Date(Date.now() + 999 * minute).toISOString() })).status).toBe(400);
+    const created = await api('post', '/api/contests', organiser, base);
+    expect(created.status).toBe(201);
+    contestId = created.body.id;
+    expect((await api('get', '/api/contests')).body.map((c: { id: string }) => c.id)).toContain(contestId);
   });
 });
 

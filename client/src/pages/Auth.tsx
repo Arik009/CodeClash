@@ -15,7 +15,7 @@ export function Auth({ onSession }: { onSession: (session: Session) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
-  const from = (useLocation().state as { from?: string } | null)?.from ?? '/';
+  const from = (useLocation().state as { from?: string } | null)?.from ?? '/arena';
 
   async function submit(event: FormEvent) {
     event.preventDefault();

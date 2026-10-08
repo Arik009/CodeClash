@@ -3,7 +3,10 @@ import { useEffect, useState } from 'react';
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api, loadSession, saveSession, SIGNED_OUT, type Session } from './api';
 import { Admin } from './pages/Admin';
+import { Arena } from './pages/Arena';
 import { Auth } from './pages/Auth';
+import { ContestRoom } from './pages/ContestRoom';
+import { Control } from './pages/Control';
 import { Home } from './pages/Home';
 import { NotFound } from './pages/NotFound';
 import { Practice } from './pages/Practice';
@@ -37,6 +40,7 @@ export default function App() {
 
   const role = session?.user.role;
   const unverified = session?.user.emailVerified === false;
+  const isOrganiser = role === 'organiser' || role === 'admin';
   const signIn = <Navigate to="/auth" state={{ from: location.pathname }} />;
   return (
     <>
@@ -45,7 +49,9 @@ export default function App() {
         <div className="header-in">
           <Link to="/" className="brand" aria-label="CodeClash home"><span className="brand-mark">&gt;_</span>codeclash</Link>
           <nav className="menu" aria-label="Main">
+            <NavLink to="/arena">contests</NavLink>
             <NavLink to="/problemset">problemset</NavLink>
+            {isOrganiser ? <NavLink to="/control">control</NavLink> : null}
             {role === 'admin' ? <NavLink to="/admin">admin</NavLink> : null}
           </nav>
           <div className="header-right">
@@ -70,10 +76,13 @@ export default function App() {
       <main id="main" tabIndex={-1}>
         <Routes>
           <Route path="/" element={<Home signedIn={!!session} />} />
-          <Route path="/auth" element={session && !unverified ? <Navigate to="/" /> : <Auth onSession={setSession} />} />
+          <Route path="/auth" element={session && !unverified ? <Navigate to="/arena" /> : <Auth onSession={setSession} />} />
+          <Route path="/arena" element={<Arena />} />
+          <Route path="/arena/:id" element={<ContestRoom />} />
           <Route path="/problemset" element={<Problemset />} />
           <Route path="/practice/:versionId" element={<Practice signedIn={!!session} />} />
-          <Route path="/admin" element={role === 'admin' ? <Admin me={session!.user.id} /> : session ? <Navigate to="/" /> : signIn} />
+          <Route path="/control" element={isOrganiser ? <Control /> : session ? <Navigate to="/arena" /> : signIn} />
+          <Route path="/admin" element={role === 'admin' ? <Admin me={session!.user.id} /> : session ? <Navigate to="/arena" /> : signIn} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

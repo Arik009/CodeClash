@@ -5,7 +5,7 @@ import { BSON, type Db, ObjectId } from 'mongodb';
 import { z } from 'zod';
 import { auditCollection } from '../db/audit.js';
 import { HttpError } from '../domain/errors.js';
-import { enqueueSubmission, latestPublished } from '../domain/judging.js';
+import { enqueueSubmission, latestPublished, publishedVersions } from '../domain/judging.js';
 import { type RunCase } from '../domain/problems.js';
 import { checkPassword, hashPassword, issueRefresh, readAccess, revokeRefresh, rotateRefresh, signAccess } from './auth.js';
 import { assertVerified, newVerifyToken, publicUser, runSamples, verifyEmail } from '../domain/product.js';
@@ -49,6 +49,9 @@ function optionalAuth(req: Request) {
     return null;
   }
 }
+
+const STAFF: Role[] = ['setter', 'organiser', 'admin'];
+const STARTED = ['running', 'frozen', 'ended', 'published'];
 
 async function audit(
   db: Db,
@@ -170,6 +173,92 @@ export function createApp(deps: AppDeps) {
     if (!doc) throw new HttpError(401, 'User no longer exists');
     const profile = publicUser({ ...doc, _id: doc._id, role: doc.role as Role, displayName: doc.displayName as string });
     res.json({ ...profile, email: doc.email });
+  }));
+
+  app.post('/api/contests', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['organiser', 'admin']);
+    const body = z.object({
+      title: z.string().min(1),
+      type: z.enum(['coding', 'quiz', 'mixed']),
+      capacity: z.number().int().positive(),
+      startsAt: z.string().datetime(),
+      endsAt: z.string().datetime(),
+      freezeAt: z.string().datetime(),
+      registrationOpensAt: z.string().datetime(),
+      scoringMode: z.enum(['icpc', 'quiz']),
+      problemIds: z.array(z.string()).default([]),
+    }).parse(req.body);
+    if (new Date(body.endsAt) <= new Date(body.startsAt)) throw new HttpError(400, 'End must be after start');
+    if (new Date(body.freezeAt) < new Date(body.startsAt) || new Date(body.freezeAt) > new Date(body.endsAt)) {
+      throw new HttpError(400, 'Freeze must fall between start and end');
+    }
+    const inserted = await db.collection('contests').insertOne({
+      ...body,
+      startsAt: new Date(body.startsAt),
+      endsAt: new Date(body.endsAt),
+      freezeAt: new Date(body.freezeAt),
+      registrationOpensAt: new Date(body.registrationOpensAt),
+      problemIds: body.problemIds.map((id) => new ObjectId(id)),
+      status: 'draft',
+      reserved: 0,
+      waitlistSeq: 0,
+      createdBy: new ObjectId(user.sub),
+    });
+    res.status(201).json({ id: String(inserted.insertedId) });
+  }));
+
+  app.get('/api/contests/:id', asyncRoute(async (req, res) => {
+    const contest = await db.collection('contests').findOne({ _id: new ObjectId(req.params.id) });
+    if (!contest) throw new HttpError(404, 'Contest not found');
+    const viewer = optionalAuth(req);
+    const status = contest.status as string;
+    const showProblems = STARTED.includes(status) || (viewer !== null && STAFF.includes(viewer.role));
+    const versions = showProblems ? await publishedVersions(db, (contest.problemIds as ObjectId[]) ?? []) : [];
+    res.json({
+      id: String(contest._id),
+      title: contest.title,
+      type: contest.type,
+      status,
+      scoringMode: contest.scoringMode,
+      capacity: contest.capacity,
+      reserved: contest.reserved,
+      startsAt: contest.startsAt,
+      freezeAt: contest.freezeAt,
+      endsAt: contest.endsAt,
+      serverNow: new Date().toISOString(),
+      problemCount: ((contest.problemIds as ObjectId[]) ?? []).length,
+      problems: versions.map((v) => ({
+        problemId: String(v.problemId),
+        versionId: String(v._id),
+        title: v.title,
+        statement: v.statement,
+        samples: v.samples,
+        limits: v.limits ?? null,
+        editorial: status === 'ended' || status === 'published' ? v.editorial ?? null : null,
+      })),
+    });
+  }));
+
+  app.get('/api/catalog', asyncRoute(async (req, res) => {
+    requireRole(req, STAFF);
+    const versions = await publishedVersions(db);
+    res.json(versions.map((v) => ({ problemId: String(v.problemId), versionId: String(v._id), title: v.title, tags: v.tags ?? [] })));
+  }));
+
+  app.get('/api/contests', asyncRoute(async (_req, res) => {
+    const rows = await db.collection('contests').find({}).sort({ startsAt: 1 }).limit(100).toArray();
+    res.json(rows.map((c) => ({
+      id: String(c._id),
+      title: c.title,
+      type: c.type,
+      status: c.status,
+      capacity: c.capacity,
+      reserved: c.reserved,
+      scoringMode: c.scoringMode,
+      startsAt: c.startsAt,
+      freezeAt: c.freezeAt,
+      endsAt: c.endsAt,
+    })));
   }));
 
   app.get('/api/archive', asyncRoute(async (req, res) => {

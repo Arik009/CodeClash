@@ -12,6 +12,20 @@ export async function latestPublished(db: Db, problemId: ObjectId) {
     .next();
 }
 
+/** One published version per problem, the newest. */
+export async function publishedVersions(db: Db, problemIds?: ObjectId[]) {
+  const rows = await db.collection('problem_versions').aggregate([
+    { $match: { status: 'published', ...(problemIds ? { problemId: { $in: problemIds } } : {}) } },
+    ...(problemIds ? [] : [{ $project: { problemId: 1, version: 1, title: 1, tags: 1 } }]),
+    { $sort: { version: -1 } },
+    { $group: { _id: '$problemId', doc: { $first: '$$ROOT' } } },
+    { $replaceRoot: { newRoot: '$doc' } },
+  ]).toArray();
+  if (!problemIds) return rows.sort((a, b) => String(a.title).localeCompare(String(b.title)));
+  const order = new Map(problemIds.map((id, index) => [String(id), index]));
+  return rows.sort((a, b) => (order.get(String(a.problemId)) ?? 0) - (order.get(String(b.problemId)) ?? 0));
+}
+
 export async function enqueueSubmission(
   db: Db,
   input: {
