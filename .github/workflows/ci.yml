@@ -24,7 +24,12 @@ jobs:
         run: npm run build -w packages/shared && npm run build -w judge
       - run: npm run lint
       - run: npm run typecheck
-      - name: Unit and integration tests with coverage
+      - name: Pull sandbox images
+        run: |
+          for image in node:22-alpine python:3.12-alpine; do
+            docker pull -q "$image"
+          done
+      - name: Unit, integration and isolation tests with coverage
         run: npm run test:coverage
       - uses: actions/upload-artifact@v4
         if: always()

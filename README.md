@@ -106,7 +106,7 @@ Do not commit `.env`. It is listed in `.gitignore`.
 
 ## Tests
 
-These do not need the Docker stack:
+These do not need the Docker stack, except the container-escape cases, which skip themselves when Docker is unavailable:
 
 ```bash
 npm run lint

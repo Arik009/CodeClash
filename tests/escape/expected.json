@@ -1,0 +1,7 @@
+[
+  { "file": "forkbomb.py", "language": "python", "verdict": "RE" },
+  { "file": "read-host.py", "language": "python", "verdict": "RE" },
+  { "file": "socket.py", "language": "python", "verdict": "RE" },
+  { "file": "spin.py", "language": "python", "verdict": "TLE" },
+  { "file": "flood.py", "language": "python", "verdict": "RE" }
+]
