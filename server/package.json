@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "verify:catalog": "tsx src/verify-catalog.ts"
   },
   "dependencies": {
     "@codeclash/judge": "*",

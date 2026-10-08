@@ -103,6 +103,7 @@ Copy-Item .env.example judge\.env
 | `PORT` | API port. Default `4000` |
 | `CLIENT_ORIGIN` | Browser origin allowed by CORS. Default `http://localhost:5173` |
 | `JUDGE_SLOTS` | How many submissions this judge runs at once. Default `4` |
+| `JUDGE_BATCH` | `1` compiles once and runs every test in one container. Default `0` (one container per test) |
 
 Do not commit `.env`. It is listed in `.gitignore`.
 
@@ -122,6 +123,8 @@ npx playwright test
 These need `npm run dev` already running:
 
 ```bash
+npm run verify:catalog -w server         # every catalog reference passes, every wrong solution fails
+node tests/load/judge-batch.mjs          # judge timing with and without JUDGE_BATCH
 node tests/failure/run.mjs redis mongo   # failure drills; see tests/failure/README.md
 ```
 

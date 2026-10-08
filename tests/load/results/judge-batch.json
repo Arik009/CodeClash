@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-03T09:35:48.417Z",
+  "rounds": 2,
+  "rows": [
+    {
+      "language": "python",
+      "tests": 12,
+      "perTestMs": 9625,
+      "batchMs": 1638,
+      "speedup": 5.88
+    },
+    {
+      "language": "cpp",
+      "tests": 12,
+      "perTestMs": 32755,
+      "batchMs": 3108,
+      "speedup": 10.54
+    },
+    {
+      "language": "java",
+      "tests": 12,
+      "perTestMs": 28940,
+      "batchMs": 4294,
+      "speedup": 6.74
+    }
+  ]
+}

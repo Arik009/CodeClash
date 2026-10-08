@@ -6,7 +6,7 @@ import { Redis } from 'ioredis';
 import { MongoClient, ObjectId } from 'mongodb';
 import { canTakePractice } from './slots.js';
 import { judgeCases } from './decide.js';
-import { runInDocker } from './runner.js';
+import { judgeBatch, runInDocker } from './runner.js';
 
 const mongo = new MongoClient(process.env.MONGO_URL ?? 'mongodb://app:codeclash@127.0.0.1:27017/codeclash?replicaSet=rs0&authSource=codeclash');
 await mongo.connect();
@@ -68,7 +68,11 @@ async function handle(stream: string, id: string, submissionId: string) {
     const limit = limits[language] ?? defaultLimit(language);
     await db.collection('submissions').updateOne({ _id: claimed._id, claimToken: token }, { $set: { status: 'running' } });
     const request = { language, code: claimed.code as string, timeMs: limit.timeMs, memoryMb: limit.memoryMb };
-    const run = (test: { input: string; output: string }) => runInDocker({ ...request, stdin: test.input, expected: test.output });
+    const batched = process.env.JUDGE_BATCH === '1'
+      ? new Map((await judgeBatch(request, tests)).map((outcome, i) => [tests[i]!, outcome]))
+      : null;
+    const run = async (test: { input: string; output: string }) => batched?.get(test)
+      ?? runInDocker({ ...request, stdin: test.input, expected: test.output });
     const result = await judgeCases(tests, run);
     const saved = await db.collection('submissions').updateOne(
       { _id: claimed._id, claimToken: token, status: { $in: ['claimed', 'running'] } },
