@@ -349,14 +349,14 @@ describe('accounts and administration', () => {
     expect((await api('get', '/health')).body).toEqual({ ok: true, mongo: true, redis: true });
   });
 
-  it('registers, drains and evicts workers and audits each step', async () => {
+  it('registers, drains and evicts workers and searches the audit log', async () => {
     const worker = await api('post', '/api/admin/workers', admin, { name: 'judge-2', slots: 2 });
     await api('post', `/api/admin/workers/${worker.body.id}/drain`, admin);
     const workers = await api('get', '/api/admin/workers', admin);
     expect(workers.body).toContainEqual(expect.objectContaining({ name: 'judge-2', status: 'draining' }));
     expect((await api('post', `/api/admin/workers/${worker.body.id}/evict`, admin)).body.status).toBe('evicted');
 
-    const audit = await api('get', '/api/admin/audit', admin);
+    const audit = await api('get', '/api/admin/audit?q=worker.', admin);
     expect(audit.body.map((row: { action: string }) => row.action)).toEqual(expect.arrayContaining(['worker.register', 'worker.drain', 'worker.evict']));
     expect((await api('get', '/api/admin/users', admin)).body.length).toBeGreaterThan(3);
     expect((await api('put', `/api/admin/users/${adminId}/role`, admin, { role: 'participant' })).status).toBe(409);

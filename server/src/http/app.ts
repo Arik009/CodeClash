@@ -838,13 +838,18 @@ export function createApp(deps: AppDeps) {
 
   app.get('/api/admin/audit', asyncRoute(async (req, res) => {
     requireRole(req, ['admin']);
-    const rows = await auditCollection(db).find({}).sort({ at: -1 }).limit(100).toArray();
+    const q = String(req.query.q ?? '').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const filter = q ? { $or: ['action', 'actor', 'target', 'decision'].map((field) => ({ [field]: { $regex: q, $options: 'i' } })) } : {};
+    const rows = await auditCollection(db).find(filter).sort({ at: -1 }).limit(100).toArray();
     res.json(rows.map((r) => ({ ...r, _id: String(r._id) })));
   }));
 
   app.get('/api/admin/users', asyncRoute(async (req, res) => {
     requireRole(req, ['admin']);
-    const rows = await db.collection('users').find({}).project({ passwordHash: 0 }).sort({ createdAt: -1 }).limit(50).toArray();
+    const q = String(req.query.q ?? '').trim();
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const filter = q ? { $or: [{ email: { $regex: escaped, $options: 'i' } }, { displayName: { $regex: escaped, $options: 'i' } }] } : {};
+    const rows = await db.collection('users').find(filter).project({ passwordHash: 0 }).sort({ createdAt: -1 }).limit(50).toArray();
     res.json(rows.map((u) => ({ id: String(u._id), email: u.email, displayName: u.displayName, role: u.role })));
   }));
 

@@ -1,4 +1,4 @@
-import { Plus } from 'lucide-react';
+import { Plus, Search } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api } from '../api';
 import { Alert, Empty, errorText, StatusPill, toast } from '../ui';
@@ -17,11 +17,13 @@ export function Admin({ me }: { me: string }) {
   const [audit, setAudit] = useState<Audit[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [name, setName] = useState('local-1');
+  const [userQuery, setUserQuery] = useState('');
+  const [auditQuery, setAuditQuery] = useState('');
   const [error, setError] = useState('');
 
   const loadWorkers = useCallback(() => api<Worker[]>('/api/admin/workers').then(setWorkers), []);
-  const loadAudit = useCallback(() => api<Audit[]>('/api/admin/audit').then(setAudit), []);
-  const loadUsers = useCallback(() => api<User[]>('/api/admin/users').then(setUsers), []);
+  const loadAudit = useCallback((q = '') => api<Audit[]>(`/api/admin/audit?q=${encodeURIComponent(q)}`).then(setAudit), []);
+  const loadUsers = useCallback((q = '') => api<User[]>(`/api/admin/users?q=${encodeURIComponent(q)}`).then(setUsers), []);
 
   useEffect(() => {
     Promise.all([loadWorkers(), loadAudit(), loadUsers()]).catch((e) => setError(errorText(e)));
@@ -41,7 +43,7 @@ export function Admin({ me }: { me: string }) {
     event.preventDefault();
     await run(async () => {
       await api('/api/admin/workers', { method: 'POST', body: JSON.stringify({ name, slots: 4 }) });
-      await Promise.all([loadWorkers(), loadAudit()]);
+      await Promise.all([loadWorkers(), loadAudit(auditQuery)]);
     }, `Worker ${name} registered`);
   }
 
@@ -49,14 +51,14 @@ export function Admin({ me }: { me: string }) {
     if (action === 'evict' && !window.confirm(`Evict ${worker.name}? Its unfinished work moves to another worker.`)) return;
     await run(async () => {
       await api(`/api/admin/workers/${worker.id}/${action}`, { method: 'POST' });
-      await Promise.all([loadWorkers(), loadAudit()]);
+      await Promise.all([loadWorkers(), loadAudit(auditQuery)]);
     }, `${worker.name}: ${action === 'drain' ? 'draining' : 'evicted'}`);
   }
 
   async function setRole(user: User, role: string) {
     await run(async () => {
       await api(`/api/admin/users/${user.id}/role`, { method: 'PUT', body: JSON.stringify({ role }) });
-      await Promise.all([loadUsers(), loadAudit()]);
+      await Promise.all([loadUsers(userQuery), loadAudit(auditQuery)]);
     }, `${user.displayName} is now ${role}`);
   }
 
@@ -84,6 +86,10 @@ export function Admin({ me }: { me: string }) {
 
       {tab === 'people' ? (
         <>
+          <form className="row" onSubmit={(e) => { e.preventDefault(); void run(() => loadUsers(userQuery)); }} style={{ marginBottom: 'var(--space-3)' }}>
+            <div className="input-icon grow" style={{ maxWidth: '24rem' }}><Search size={14} /><input aria-label="Search people" placeholder="email or name" value={userQuery} onChange={(e) => setUserQuery(e.target.value)} /></div>
+            <button className="btn" type="submit">search</button>
+          </form>
           <div className="table-wrap">
             {users.length === 0 ? <Empty title="Nobody matches" /> : (
               <table>
@@ -141,6 +147,10 @@ export function Admin({ me }: { me: string }) {
 
       {tab === 'audit' ? (
         <>
+          <form className="row" onSubmit={(e) => { e.preventDefault(); void run(() => loadAudit(auditQuery)); }} style={{ marginBottom: 'var(--space-3)' }}>
+            <div className="input-icon grow" style={{ maxWidth: '24rem' }}><Search size={14} /><input aria-label="Search audit" placeholder="action, actor, target or decision" value={auditQuery} onChange={(e) => setAuditQuery(e.target.value)} /></div>
+            <button className="btn" type="submit">search</button>
+          </form>
           <div className="table-wrap">
             {audit.length === 0 ? <Empty title="No audit rows" /> : (
               <table>

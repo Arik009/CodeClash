@@ -124,11 +124,11 @@ describe('routes', () => {
   it('lets an admin change a role and audits it', async () => {
     const app = createApp({ db, redis });
     const admin = await signIn('admin@codeclash.local', 'codeclash');
-    const found = await request(app).get('/api/admin/users').set('authorization', `Bearer ${admin}`);
-    const neha = found.body.find((row: { email: string }) => row.email === 'neha@example.com');
-    expect(neha?.passwordHash).toBeUndefined();
+    const found = await request(app).get('/api/admin/users?q=neha').set('authorization', `Bearer ${admin}`);
+    expect(found.body[0]?.email).toBe('neha@example.com');
+    expect(found.body[0]?.passwordHash).toBeUndefined();
     const changed = await request(app)
-      .put(`/api/admin/users/${neha.id}/role`)
+      .put(`/api/admin/users/${found.body[0].id}/role`)
       .set('authorization', `Bearer ${admin}`)
       .send({ role: 'setter' });
     expect(changed.status).toBe(200);
