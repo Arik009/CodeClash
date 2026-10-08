@@ -1,7 +1,8 @@
-import { type Role } from '@codeclash/shared';
+import { defaultLimit, type Role, type SourceLanguage } from '@codeclash/shared';
 import { createHash, randomBytes } from 'node:crypto';
 import { type Db, ObjectId } from 'mongodb';
 import { HttpError } from './errors.js';
+import type { RunCase } from './problems.js';
 
 export function hashVerifyToken(raw: string) {
   return createHash('sha256').update(raw).digest('hex');
@@ -30,6 +31,33 @@ export async function verifyEmail(db: Db, token: string) {
     { $set: { emailVerified: true }, $unset: { verifyTokenHash: '', verifyExpires: '' } },
   );
   return { id: String(user._id), emailVerified: true };
+}
+
+/** Runs the visible sample tests and stores nothing. */
+export async function runSamples(
+  db: Db,
+  run: RunCase,
+  input: { problemVersionId: string; language: SourceLanguage; code: string; userId: string; contestId?: string },
+) {
+  const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(input.problemVersionId) });
+  if (!version) throw new HttpError(404, 'Problem version not found');
+  const tests = ((version.tests as { input: string; output: string; hidden?: boolean }[]) ?? []).filter((test) => test.hidden === false);
+  if (tests.length === 0) throw new HttpError(400, 'This problem has no sample tests');
+  const limits = (version.limits as Record<string, { timeMs: number; memoryMb: number }>) ?? {};
+  const limit = limits[input.language] ?? defaultLimit(input.language);
+  const results = [];
+  for (const test of tests) {
+    const outcome = await run({
+      language: input.language,
+      code: input.code,
+      stdin: test.input,
+      expected: test.output,
+      timeMs: limit.timeMs,
+      memoryMb: limit.memoryMb,
+    });
+    results.push({ verdict: outcome.verdict, stdout: outcome.stdout.slice(0, 2000) });
+  }
+  return { results };
 }
 
 export function publicUser(user: { _id: ObjectId; role: Role; displayName: string; email?: string; emailVerified?: boolean; rating?: number }) {

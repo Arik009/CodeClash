@@ -1,7 +1,7 @@
 import { hash } from '@node-rs/argon2';
 import type { Express } from 'express';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
-import { MongoClient, type Db } from 'mongodb';
+import { MongoClient, ObjectId, type Db } from 'mongodb';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ensureIndexes } from '../db/indexes.js';
@@ -39,6 +39,9 @@ function api(method: Method, path: string, token?: string, body?: unknown) {
 }
 
 let neha = { token: '', id: '' };
+let ravi = { token: '', id: '' };
+let problemId = '';
+let versionId = '';
 
 async function signUp(email: string, displayName: string) {
   const res = await api('post', '/api/auth/register', undefined, { email, password: 'longpassword', displayName });
@@ -64,11 +67,44 @@ beforeAll(async () => {
   });
   app = createApp({ db, redis, runCase });
   neha = await signUp('neha@example.com', 'Neha');
+  ravi = await signUp('ravi@example.com', 'Ravi');
 }, 180000);
 
 afterAll(async () => {
   await client.close();
   await repl.stop();
+});
+
+describe('practice', () => {
+  beforeAll(async () => {
+    const problem = await db.collection('problems').insertOne({ title: 'Double' });
+    const version = await db.collection('problem_versions').insertOne({
+      problemId: problem.insertedId, version: 1, status: 'published', title: 'Double', statement: 'Print twice n.',
+      samples: 'input\n4\noutput\n8\n', editorial: 'Multiply by two.', tags: ['math'],
+      tests: [{ input: '4\n', output: '8\n', hidden: false }, { input: '-3\n', output: '-6\n', hidden: true }],
+      limits: { python: { timeMs: 1000, memoryMb: 128 } },
+    });
+    problemId = String(problem.insertedId);
+    versionId = String(version.insertedId);
+  });
+
+  it('lists the archive and opens a problem from it', async () => {
+    const archive = await api('get', '/api/archive');
+    expect(archive.body.items.map((row: { versionId: string }) => row.versionId)).toContain(versionId);
+    expect(archive.body).toMatchObject({ page: 1, pageSize: 50, tags: expect.arrayContaining(['math']) });
+    const paged = await api('get', '/api/archive?pageSize=1&page=1');
+    expect(paged.body.items).toHaveLength(1);
+    expect(paged.body.total).toBe(archive.body.total);
+    expect((await api('get', `/api/archive/${problemId}`)).body.title).toBe('Double');
+    const open = await api('get', `/api/problem-versions/${versionId}/public`);
+    expect(open.body).toMatchObject({ tags: ['math'], limits: { python: { timeMs: 1000, memoryMb: 128 } } });
+  });
+
+  it('accepts practice submissions on archived problems', async () => {
+    const sent = await api('post', '/api/practice/submissions', ravi.token, { problemVersionId: versionId, language: 'javascript', code: 'console.log(1)' });
+    expect(sent.status).toBe(202);
+    expect((await api('post', '/api/practice/submissions', ravi.token, { problemVersionId: String(new ObjectId()), language: 'python', code: 'x' })).status).toBe(404);
+  });
 });
 
 describe('accounts and administration', () => {

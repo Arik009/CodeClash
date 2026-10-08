@@ -115,6 +115,12 @@ export function Auth({ onSession }: { onSession: (session: Session) => void }) {
             {busy ? 'please wait…' : mode === 'login' ? 'Sign in' : 'Create account'} <ArrowRight size={16} />
           </button>
         </form>
+        {import.meta.env.DEV ? (
+          <div className="demo">
+            local demo admin: <code>admin@codeclash.local</code> / <code>codeclash</code>{' '}
+            <button type="button" className="btn ghost sm" onClick={() => { setMode('login'); setEmail('admin@codeclash.local'); setPassword('codeclash'); }}>fill in</button>
+          </div>
+        ) : null}
         </>)}
       </div>
     </div>

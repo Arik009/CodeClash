@@ -9,9 +9,11 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "seed": "tsx src/seed.ts"
   },
   "dependencies": {
+    "@codeclash/judge": "*",
     "@codeclash/shared": "*",
     "@node-rs/argon2": "^2.0.2",
     "cors": "^2.8.5",

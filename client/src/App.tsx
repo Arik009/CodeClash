@@ -1,10 +1,12 @@
 import { LogOut } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api, loadSession, saveSession, SIGNED_OUT, type Session } from './api';
 import { Auth } from './pages/Auth';
 import { Home } from './pages/Home';
 import { NotFound } from './pages/NotFound';
+import { Practice } from './pages/Practice';
+import { Problemset } from './pages/Problemset';
 import { ThemePicker } from './ThemePicker';
 import { Toaster } from './ui';
 
@@ -39,6 +41,9 @@ export default function App() {
       <header className="header">
         <div className="header-in">
           <Link to="/" className="brand" aria-label="CodeClash home"><span className="brand-mark">&gt;_</span>codeclash</Link>
+          <nav className="menu" aria-label="Main">
+            <NavLink to="/problemset">problemset</NavLink>
+          </nav>
           <div className="header-right">
             <ThemePicker />
             {session ? (
@@ -62,6 +67,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home signedIn={!!session} />} />
           <Route path="/auth" element={session && !unverified ? <Navigate to="/" /> : <Auth onSession={setSession} />} />
+          <Route path="/problemset" element={<Problemset />} />
+          <Route path="/practice/:versionId" element={<Practice signedIn={!!session} />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

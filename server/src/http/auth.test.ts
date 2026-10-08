@@ -69,6 +69,12 @@ describe('authz', () => {
 });
 
 describe('routes', () => {
+  async function signIn(email: string, password: string) {
+    const app = createApp({ db, redis });
+    const res = await request(app).post('/api/auth/login').send({ email, password });
+    return res.body.access as string;
+  }
+
   it('revokes the whole refresh chain when a used token is replayed', async () => {
     const app = createApp({ db, redis });
     const login = await request(app).post('/api/auth/login').send({ email: 'neha@example.com', password: 'longpassword' });
@@ -79,5 +85,21 @@ describe('routes', () => {
     expect(replay.status).toBe(401);
     const afterReplay = await request(app).post('/api/auth/refresh').send({ refresh: rotated.body.refresh });
     expect(afterReplay.status).toBe(401);
+  });
+
+  it('rate-limits submissions per user', async () => {
+    const app = createApp({ db, redis });
+    const access = await signIn('neha@example.com', 'longpassword');
+    const problem = await db.collection('problems').insertOne({ title: 'free' });
+    const version = await db.collection('problem_versions').insertOne({ problemId: problem.insertedId, version: 1, status: 'published', title: 'free' });
+    let last = 0;
+    for (let i = 0; i < 13; i += 1) {
+      const res = await request(app)
+        .post('/api/practice/submissions')
+        .set('authorization', `Bearer ${access}`)
+        .send({ problemVersionId: String(version.insertedId), language: 'python', code: 'print(1)' });
+      last = res.status;
+    }
+    expect(last).toBe(429);
   });
 });

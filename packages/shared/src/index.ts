@@ -23,3 +23,12 @@ export const LANGUAGE_NAMES: Record<SourceLanguage, string> = {
   python: 'Python 3',
   javascript: 'JavaScript (Node)',
 };
+
+/** Used when a problem has no limit stored for that language. */
+export function defaultLimit(_language: SourceLanguage): { timeMs: number; memoryMb: number } {
+  return { timeMs: 2000, memoryMb: 256 };
+}
+
+export function defaultLimits(): Record<SourceLanguage, { timeMs: number; memoryMb: number }> {
+  return Object.fromEntries(SOURCE_LANGUAGES.map((language) => [language, defaultLimit(language)])) as Record<SourceLanguage, { timeMs: number; memoryMb: number }>;
+}

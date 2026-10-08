@@ -1,6 +1,8 @@
-import { AlertTriangle, Check, CheckCircle2, Copy, Info, X, XCircle } from 'lucide-react';
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { OFFLINE } from './api';
+import { AlertTriangle, Check, CheckCircle2, Copy, Info, Loader2, X, XCircle } from 'lucide-react';
+import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { api, OFFLINE } from './api';
+
+const LazyEditor = lazy(() => import('./monaco'));
 
 export type Language = 'python' | 'javascript';
 
@@ -8,6 +10,125 @@ export const LANGUAGES: { id: Language; name: string }[] = [
   { id: 'python', name: 'Python 3' },
   { id: 'javascript', name: 'JavaScript (Node)' },
 ];
+
+export const STARTERS: Record<Language, string> = {
+  python: 'import sys\n\ndata = sys.stdin.read().split()\n# read from data, print the answer\n',
+  javascript: "const data = require('fs').readFileSync(0, 'utf8').trim().split(/\\s+/);\n// read from data, print the answer\n",
+};
+
+export function Editor(props: {
+  language: Language;
+  value: string;
+  onChange: (value: string) => void;
+  height?: string;
+  readOnly?: boolean;
+  onSubmit?: () => void;
+}) {
+  return (
+    <div className="editor" style={{ height: props.height ?? '360px' }}>
+      <Suspense fallback={<div className="editor-loading"><Loader2 size={18} className="spin" /></div>}>
+        <LazyEditor {...props} />
+      </Suspense>
+    </div>
+  );
+}
+
+/** Keeps one draft per key in localStorage so a reload does not lose code. */
+export function useDraft(key: string, fallback: string) {
+  const [value, setValue] = useState(() => localStorage.getItem(key) ?? fallback);
+  useEffect(() => { setValue(localStorage.getItem(key) ?? fallback); }, [key, fallback]);
+  function update(next: string) {
+    setValue(next);
+    localStorage.setItem(key, next);
+  }
+  return [value, update] as const;
+}
+
+/** Remembers the last language across problems. */
+export function useLanguage() {
+  const [language, setLanguage] = useState<Language>(() => {
+    const stored = localStorage.getItem('cc.language');
+    return LANGUAGES.some((item) => item.id === stored) ? stored as Language : 'python';
+  });
+  function update(next: Language) {
+    setLanguage(next);
+    localStorage.setItem('cc.language', next);
+  }
+  return [language, update] as const;
+}
+
+export interface SubmissionState { status: string; verdict: string | null; reason: string | null }
+
+export function useSubmission(id: string, onDone?: (row: SubmissionState) => void) {
+  const [row, setRow] = useState<SubmissionState | null>(null);
+  const done = useRef(onDone);
+  done.current = onDone;
+  useEffect(() => {
+    if (!id) return;
+    setRow({ status: 'queued', verdict: null, reason: null });
+    let stopped = false;
+    const timer = setInterval(() => {
+      api<SubmissionState>(`/api/submissions/${id}`).then((next) => {
+        if (stopped) return;
+        setRow(next);
+        if (next.verdict) {
+          stopped = true;
+          clearInterval(timer);
+          done.current?.(next);
+        }
+      }).catch(() => {});
+    }, 1000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [id]);
+  return row;
+}
+
+export const VERDICT_NAMES: Record<string, string> = {
+  AC: 'Accepted',
+  WA: 'Wrong answer',
+  TLE: 'Time limit exceeded',
+  MLE: 'Memory limit exceeded',
+  RE: 'Runtime error',
+  CE: 'Compilation error',
+};
+
+export function verdictTone(verdict: string | null) {
+  if (!verdict) return 'accent';
+  if (verdict === 'AC') return 'ok';
+  if (verdict === 'TLE' || verdict === 'MLE') return 'warn';
+  if (verdict === 'CE') return 'muted';
+  return 'bad';
+}
+
+/** The live result of the latest submission, with the judge's reason when it failed. */
+export function VerdictCard({ row }: { row: SubmissionState | null }) {
+  if (!row) return null;
+  if (!row.verdict) {
+    return (
+      <div className="verdict-card" aria-live="polite">
+        <Loader2 size={18} className="spin accent" />
+        <div><span className="verdict pending">{row.status === 'running' ? 'Running on tests…' : 'In queue…'}</span></div>
+      </div>
+    );
+  }
+  const Icon = row.verdict === 'AC' ? CheckCircle2 : row.verdict === 'TLE' || row.verdict === 'MLE' ? AlertTriangle : XCircle;
+  return (
+    <div className={`verdict-card ${row.verdict.toLowerCase()}`} aria-live="polite">
+      <Icon size={18} className={verdictTone(row.verdict)} />
+      <div className="grow">
+        <span className={`verdict ${row.verdict.toLowerCase()}`}>{VERDICT_NAMES[row.verdict] ?? row.verdict}</span>
+        {row.reason && row.verdict !== 'AC' ? <pre>{row.reason}</pre> : null}
+      </div>
+    </div>
+  );
+}
+
+export function VerdictText({ verdict, status }: { verdict: string | null; status: string }) {
+  if (!verdict) {
+    return <span className="verdict pending"><Loader2 size={12} className="spin" /> {status === 'running' ? 'Running' : 'In queue'}</span>;
+  }
+  return <span className={`verdict ${verdict.toLowerCase()}`} title={verdict}>{VERDICT_NAMES[verdict] ?? verdict}</span>;
+}
 
 export function Box({ title, action, children, flush }: { title: string; action?: ReactNode; children: ReactNode; flush?: boolean }) {
   return (
@@ -110,6 +231,10 @@ export function formatLeft(ms: number) {
   if (d > 0) return `${d}d ${h}h`;
   const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
   return `${h > 0 ? `${h}:` : ''}${mm}:${String(s).padStart(2, '0')}`;
+}
+
+export function letter(index: number) {
+  return String.fromCharCode(65 + index);
 }
 
 export function errorText(error: unknown) {
