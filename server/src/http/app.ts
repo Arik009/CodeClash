@@ -182,6 +182,28 @@ export function createApp(deps: AppDeps) {
     res.json({ ...profile, email: doc.email });
   }));
 
+  app.patch('/api/me', asyncRoute(async (req, res) => {
+    const user = auth(req);
+    const body = z.object({ displayName: z.string().trim().min(1).max(40) }).parse(req.body);
+    const doc = await db.collection('users').findOne({ _id: new ObjectId(user.sub) });
+    if (!doc) throw new HttpError(401, 'User no longer exists');
+    await db.collection('users').updateOne({ _id: doc._id }, { $set: { displayName: body.displayName } });
+    await audit(db, user.sub, 'profile.update', user.sub, 'allow', { before: doc.displayName, after: body.displayName, reason: 'display name' });
+    const profile = publicUser({ ...doc, displayName: body.displayName, role: doc.role as Role });
+    res.json(profile);
+  }));
+
+  app.post('/api/me/password', asyncRoute(async (req, res) => {
+    const user = auth(req);
+    const body = z.object({ current: z.string().min(1), next: z.string().min(8).max(200) }).parse(req.body);
+    const doc = await db.collection('users').findOne({ _id: new ObjectId(user.sub) });
+    if (!doc || !(await checkPassword(body.current, doc.passwordHash as string))) throw new HttpError(400, 'Current password is wrong');
+    if (body.current === body.next) throw new HttpError(400, 'Choose a different password');
+    await db.collection('users').updateOne({ _id: doc._id }, { $set: { passwordHash: await hashPassword(body.next) } });
+    await audit(db, user.sub, 'profile.password', user.sub, 'allow', { reason: 'password changed' });
+    res.status(204).end();
+  }));
+
   app.post('/api/contests', asyncRoute(async (req, res) => {
     const user = requireRole(req, ['organiser', 'admin']);
     const body = z.object({

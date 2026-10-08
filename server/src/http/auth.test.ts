@@ -121,6 +121,23 @@ describe('routes', () => {
     expect(staff.body.problems).toHaveLength(1);
   });
 
+  it('renames the account and changes the password', async () => {
+    const app = createApp({ db, redis });
+    const access = await signIn('neha@example.com', 'longpassword');
+    const renamed = await request(app).patch('/api/me').set('authorization', `Bearer ${access}`).send({ displayName: 'Neha K' });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.displayName).toBe('Neha K');
+    const same = await request(app).post('/api/me/password').set('authorization', `Bearer ${access}`).send({ current: 'longpassword', next: 'longpassword' });
+    expect(same.status).toBe(400);
+    const wrong = await request(app).post('/api/me/password').set('authorization', `Bearer ${access}`).send({ current: 'nope-nope', next: 'brand-new-password' });
+    expect(wrong.status).toBe(400);
+    const changed = await request(app).post('/api/me/password').set('authorization', `Bearer ${access}`).send({ current: 'longpassword', next: 'brand-new-password' });
+    expect(changed.status).toBe(204);
+    expect((await request(app).post('/api/auth/login').send({ email: 'neha@example.com', password: 'brand-new-password' })).status).toBe(200);
+    await request(app).post('/api/me/password').set('authorization', `Bearer ${access}`).send({ current: 'brand-new-password', next: 'longpassword' });
+    await request(app).patch('/api/me').set('authorization', `Bearer ${access}`).send({ displayName: 'Neha' });
+  });
+
   it('lets an admin change a role and audits it', async () => {
     const app = createApp({ db, redis });
     const admin = await signIn('admin@codeclash.local', 'codeclash');

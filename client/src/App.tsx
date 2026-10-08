@@ -12,6 +12,7 @@ import { Home } from './pages/Home';
 import { NotFound } from './pages/NotFound';
 import { Practice } from './pages/Practice';
 import { Problemset } from './pages/Problemset';
+import { Profile } from './pages/Profile';
 import { ThemePicker } from './ThemePicker';
 import { Toaster } from './ui';
 
@@ -61,10 +62,10 @@ export default function App() {
             <ThemePicker />
             {session ? (
               <>
-                <span className="who">
+                <Link to="/profile" className="who" title="Profile">
                   <span className="avatar" aria-hidden>{(session.user.displayName ?? '?').slice(0, 1).toUpperCase()}</span>
                   <span className="name">{session.user.displayName ?? 'you'}</span>
-                </span>
+                </Link>
                 <button className="btn ghost icon sm" type="button" onClick={signOut} aria-label="Sign out" title="Sign out"><LogOut size={15} /></button>
               </>
             ) : <Link className="btn primary sm" to="/auth">sign in</Link>}
@@ -87,6 +88,7 @@ export default function App() {
           <Route path="/authoring" element={isSetter ? <Authoring /> : session ? <Navigate to="/arena" /> : signIn} />
           <Route path="/control" element={isOrganiser ? <Control /> : session ? <Navigate to="/arena" /> : signIn} />
           <Route path="/admin" element={role === 'admin' ? <Admin me={session!.user.id} /> : session ? <Navigate to="/arena" /> : signIn} />
+          <Route path="/profile" element={session ? <Profile session={session} onSession={setSession} onSignOut={signOut} /> : signIn} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
