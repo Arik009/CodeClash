@@ -25,6 +25,8 @@ export function Control() {
   const [type, setType] = useState<'coding' | 'quiz' | 'mixed'>('mixed');
   const [capacity, setCapacity] = useState(200);
   const [scoringMode, setScoringMode] = useState<'icpc' | 'ioi' | 'quiz'>('icpc');
+  const [rejudgeReason, setRejudgeReason] = useState('');
+  const [rejudgeSubmission, setRejudgeSubmission] = useState('');
   const [startNow, setStartNow] = useState(true);
   const [startsAt, setStartsAt] = useState(localInput(new Date(Date.now() + 30 * 60000)));
   const [minutes, setMinutes] = useState(120);
@@ -106,6 +108,23 @@ export function Control() {
   async function cancel(contest: Contest) {
     if (!window.confirm(`Cancel “${contest.title}”? Every seat is released.`)) return;
     await move(contest, 'cancelled', 'cancel');
+  }
+
+  async function rejudge(event: FormEvent) {
+    event.preventDefault();
+    if (!selected) return;
+    setError('');
+    try {
+      const result = await api<{ count: number }>(`/api/contests/${selected}/rejudge`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: rejudgeReason, ...(rejudgeSubmission ? { submissionId: rejudgeSubmission } : {}) }),
+      });
+      toast(`Queued ${result.count} submission${result.count === 1 ? '' : 's'} for rejudge`, 'ok');
+      setRejudgeReason('');
+      setRejudgeSubmission('');
+    } catch (err) {
+      setError(errorText(err));
+    }
   }
 
   async function openQuestion() {
@@ -235,6 +254,19 @@ export function Control() {
                 <p className="muted small" style={{ margin: 0 }}>Everyone in the room sees it at once. A new question can open once the current one closes.</p>
               </div>
             )}
+          </Box>
+          <Box title="rejudge">
+            <form onSubmit={rejudge} className="stack tight">
+              <select aria-label="Contest to rejudge" value={selected} onChange={(e) => setSelected(e.target.value)}>
+                {contests.filter((c) => c.status !== 'cancelled').map((contest) => <option key={contest.id} value={contest.id}>{contest.title}</option>)}
+              </select>
+              <label htmlFor="reason" style={{ marginTop: 0 }}>Reason</label>
+              <input id="reason" value={rejudgeReason} onChange={(e) => setRejudgeReason(e.target.value)} required minLength={3} placeholder="why the verdicts should be thrown out" />
+              <label htmlFor="one">One submission id, or leave empty for the whole contest</label>
+              <input id="one" value={rejudgeSubmission} onChange={(e) => setRejudgeSubmission(e.target.value)} placeholder="optional" />
+              <button className="btn sm" type="submit" disabled={!selected}>rejudge</button>
+              <p className="muted small" style={{ margin: 0 }}>Finished submissions go back on the queue. The audit row stores the old verdicts and this reason.</p>
+            </form>
           </Box>
           <Box title="lifecycle">
             <ol className="muted small" style={{ margin: 0, paddingLeft: '1.1rem', lineHeight: 1.9 }}>

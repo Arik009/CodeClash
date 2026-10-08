@@ -14,7 +14,7 @@ import { assertArchiveAccess, runPublishCheck, testsFromZip, type RunCase } from
 import { reserveSeat, withdrawSeat } from '../domain/registration.js';
 import { leaderboard } from '../domain/scoring.js';
 import { checkPassword, hashPassword, issueRefresh, readAccess, revokeRefresh, rotateRefresh, signAccess } from './auth.js';
-import { assertVerified, newVerifyToken, publicUser, runSamples, verifyEmail } from '../domain/product.js';
+import { assertVerified, newVerifyToken, publicUser, rejudgeSubmissions, runSamples, verifyEmail } from '../domain/product.js';
 
 export interface AppDeps {
   db: Db;
@@ -611,6 +611,18 @@ export function createApp(deps: AppDeps) {
       await redis.xadd(queued.stream, '*', 'submissionId', queued.id);
     }
     res.status(queued.replay ? 200 : 202).json({ id: queued.id, replay: queued.replay });
+  }));
+
+  app.post('/api/contests/:id/rejudge', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['organiser', 'admin']);
+    const body = z.object({
+      reason: z.string().min(3).max(500),
+      submissionId: z.string().optional(),
+      problemId: z.string().optional(),
+    }).parse(req.body);
+    const result = await rejudgeSubmissions(db, redis, { contestId: req.params.id, actor: user.sub, reason: body.reason, submissionId: body.submissionId, problemId: body.problemId });
+    await audit(db, user.sub, 'contest.rejudge', req.params.id, 'allow', { before: result.before, after: result.after, reason: body.reason });
+    res.status(202).json({ count: result.count });
   }));
 
   app.post('/api/run', asyncRoute(async (req, res) => {

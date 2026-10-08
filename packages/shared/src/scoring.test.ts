@@ -61,6 +61,16 @@ describe('icpc', () => {
     });
   });
 
+  it('drops a problem when a rejudge turns the only AC into WA', () => {
+    const row = icpcRow(
+      [{ problemId: 'a', verdict: 'WA', submittedAt: new Date('2026-10-01T10:30:00Z'), submissionId: '3' }],
+      start,
+      end,
+    );
+    expect(row.penalty).toBe(0);
+    expect(row.solved).toBe(0);
+  });
+
   it('ranks solved desc, then penalty asc, then earlier last AC', () => {
     const rows = [
       { userId: 'b', solved: 1, penalty: 40, lastAcAt: new Date('2026-10-01T11:00:00Z') },

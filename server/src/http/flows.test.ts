@@ -285,7 +285,7 @@ describe('contest lifecycle', () => {
     expect((await api('post', '/api/practice/submissions', ravi.token, { problemVersionId: String(new ObjectId()), language: 'python', code: 'x' })).status).toBe(404);
   });
 
-  it('replays the same idempotency key and runs samples without storing', async () => {
+  it('replays the same idempotency key, runs samples without storing, and rejudges', async () => {
     const first = await request(app)
       .post('/api/practice/submissions')
       .set('authorization', `Bearer ${ravi.token}`)
@@ -304,6 +304,12 @@ describe('contest lifecycle', () => {
     const ran = await api('post', '/api/run', neha.token, { problemVersionId: versionId, language: 'python', code: '# REF' });
     expect(ran.body.results[0].verdict).toBe('AC');
     expect(await db.collection('submissions').countDocuments({ code: '# REF' })).toBe(0);
+
+    const judged = await api('post', `/api/contests/${contestId}/rejudge`, organiser, { reason: 'limits were wrong' });
+    expect(judged.status).toBe(202);
+    expect(judged.body.count).toBeGreaterThan(0);
+    const row = await db.collection('audit').findOne({ action: 'contest.rejudge' });
+    expect(row?.payload).toMatchObject({ reason: 'limits were wrong' });
   });
 
   it('refuses a seat until the email is verified, then releases every seat on cancel', async () => {

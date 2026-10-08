@@ -33,6 +33,37 @@ export async function verifyEmail(db: Db, token: string) {
   return { id: String(user._id), emailVerified: true };
 }
 
+export async function rejudgeSubmissions(
+  db: Db,
+  redis: { xadd: (stream: string, id: string, ...fields: string[]) => Promise<unknown> },
+  input: { contestId: string; actor: string; reason: string; submissionId?: string; problemId?: string },
+) {
+  const contest = await db.collection('contests').findOne({ _id: new ObjectId(input.contestId) });
+  if (!contest) throw new HttpError(404, 'Contest not found');
+  if (contest.status === 'cancelled') throw new HttpError(409, 'A cancelled contest cannot be rejudged');
+  const filter: Record<string, unknown> = {
+    contestId: contest._id,
+    kind: 'contest',
+    status: { $in: ['judged', 'scored'] },
+  };
+  if (input.submissionId) filter._id = new ObjectId(input.submissionId);
+  if (input.problemId) filter.problemId = new ObjectId(input.problemId);
+  const rows = await db.collection('submissions').find(filter).toArray();
+  if (rows.length === 0) throw new HttpError(404, 'No finished submissions match');
+  const before = rows.map((row) => ({ id: String(row._id), verdict: row.verdict, points: row.points ?? null }));
+  for (const row of rows) {
+    await db.collection('submissions').updateOne(
+      { _id: row._id },
+      { $set: { status: 'queued', claimToken: null, verdict: null, reason: null, points: null, judgedAt: null }, $unset: { workerId: '' } },
+    );
+    await redis.xadd('judge:contest', '*', 'submissionId', String(row._id));
+  }
+  const users = [...new Set(rows.map((row) => String(row.userId)))];
+  const { recomputeStanding } = await import('./scoring.js');
+  for (const userId of users) await recomputeStanding(db, input.contestId, userId);
+  return { count: rows.length, before, after: { status: 'queued' } };
+}
+
 /** Runs the visible sample tests and stores nothing. */
 export async function runSamples(
   db: Db,
