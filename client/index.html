@@ -1,25 +1,25 @@
 <!doctype html>
 <html lang="en">
-
-<head>
-  <meta charset="UTF-8" />
-  <link rel="icon" type="image/svg+xml"
-    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236366f1'><polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'/></svg>" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>BitBattle - Real-Time Multiplayer Coding & Quiz Arena</title>
-  <meta name="description"
-    content="Compete in real-time multiplayer speed coding contests and quiz showdowns with live leaderboards and test execution." />
-  <!-- Google Fonts for crisp monospace and modern UI typography -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
-    rel="stylesheet">
-</head>
-
-<body>
-  <div id="root"></div>
-  <script type="module" src="/src/main.tsx"></script>
-</body>
-
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="CodeClash: live coding and quiz contests" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><text x='5' y='22' font-family='monospace' font-size='16' font-weight='700' fill='white'>&gt;_</text></svg>" />
+    <title>CodeClash</title>
+    <script>
+      try {
+        var saved = JSON.parse(localStorage.getItem('cc.theme.vars') || 'null');
+        if (saved) {
+          var root = document.documentElement;
+          for (var name in saved.vars) root.style.setProperty(name, saved.vars[name]);
+          root.dataset.theme = saved.id;
+          root.style.colorScheme = saved.dark ? 'dark' : 'light';
+        }
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

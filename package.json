@@ -1,16 +1,19 @@
 {
-  "name": "bitbattle-workspace",
-  "version": "1.0.0",
+  "name": "codeclash",
+  "version": "2.0.0",
   "private": true,
-  "description": "BitBattle - Real Time Multiplayer Coding & Quiz Contest Platform",
+  "description": "CodeClash — live coding and quiz contests",
+  "workspaces": [
+    "packages/shared",
+    "server",
+    "client"
+  ],
   "scripts": {
-    "dev": "concurrently -n \"SERVER,CLIENT\" -c \"blue.bold,cyan.bold\" \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
-    "dev:server": "npm run dev --prefix server",
-    "dev:client": "npm run dev --prefix client",
-    "install:all": "npm install && npm install --prefix server && npm install --prefix client",
-    "build": "npm run build --prefix server && npm run build --prefix client"
+    "build": "npm run build -w packages/shared && npm run build -w server && npm run build -w client",
+    "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w server && npm run typecheck -w client"
   },
-  "devDependencies": {
-    "concurrently": "^8.2.2"
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.12": true
   }
 }

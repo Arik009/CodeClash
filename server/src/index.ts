@@ -1,71 +1,29 @@
-import express from 'express';
-import http from 'http';
-import { Server } from 'socket.io';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import { RoomManager } from './services/roomManager';
-import { GameEngine } from './services/gameEngine';
-import { setupSocketHandlers } from './socket';
-import { QUIZ_QUESTIONS } from './data/questions';
-import { CODE_CHALLENGES } from './data/challenges';
+import 'dotenv/config';
+import { createServer } from 'node:http';
+import { Redis } from 'ioredis';
+import { MongoClient } from 'mongodb';
+import pino from 'pino';
+import { createApp } from './http/app.js';
 
-dotenv.config();
+const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
+const mongoUrl = process.env.MONGO_URL ?? 'mongodb://app:codeclash@127.0.0.1:27017/codeclash?replicaSet=rs0&authSource=codeclash';
+const redisUrl = process.env.REDIS_URL ?? 'redis://127.0.0.1:6379';
 
-const app = express();
-const server = http.createServer(app);
+const mongo = new MongoClient(mongoUrl);
+await mongo.connect();
+const db = mongo.db();
 
-const PORT = process.env.PORT || 5000;
-
-app.use(cors({ origin: '*' }));
-app.use(express.json());
-
-// Initialize Core Services
-const roomManager = new RoomManager();
-const io = new Server(server, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
-});
-const gameEngine = new GameEngine(io, roomManager);
-
-// Setup WebSockets
-setupSocketHandlers(io, roomManager, gameEngine);
-
-// REST API Endpoints
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: Date.now(),
-    activeRooms: roomManager.getAllRooms().length,
-    activeSockets: io.engine.clientsCount
-  });
+const redis = new Redis(redisUrl);
+const app = createApp({
+  db,
+  redis: {
+    get: (key) => redis.get(key),
+    ping: () => redis.ping(),
+  },
+  log,
 });
 
-app.get('/api/rooms', (req, res) => {
-  res.json(roomManager.getPublicRooms());
-});
+const server = createServer(app);
 
-app.get('/api/challenges', (req, res) => {
-  res.json(
-    CODE_CHALLENGES.map((c) => ({
-      id: c.id,
-      title: c.title,
-      difficulty: c.difficulty,
-      category: c.category,
-      description: c.description
-    }))
-  );
-});
-
-app.get('/api/quiz-stats', (req, res) => {
-  res.json({
-    totalQuestions: QUIZ_QUESTIONS.length,
-    categories: Array.from(new Set(QUIZ_QUESTIONS.map((q) => q.category)))
-  });
-});
-
-server.listen(PORT, () => {
-  console.log(`🚀 BitBattle Server running on port ${PORT}`);
-  console.log(`📡 WebSocket server ready`);
-});
+const port = Number(process.env.PORT ?? 4000);
+server.listen(port, () => log.info({ port }, 'codeclash server listening'));
