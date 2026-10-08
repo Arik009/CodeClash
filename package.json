@@ -9,8 +9,13 @@
     "client"
   ],
   "scripts": {
+    "predev": "npm run build -w packages/shared",
+    "dev": "concurrently -n server,client -c black,black \"npm run dev -w server\" \"npm run dev -w client\"",
     "build": "npm run build -w packages/shared && npm run build -w server && npm run build -w client",
     "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w server && npm run typecheck -w client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
