@@ -221,6 +221,13 @@ export function createApp(deps: AppDeps) {
     if (count > Number(process.env.SUBMIT_PER_MINUTE ?? 12)) throw new HttpError(429, 'Too many submissions; wait a minute');
   }
 
+  function idempotencyKey(req: Request) {
+    const key = req.header('idempotency-key')?.trim();
+    if (!key) return undefined;
+    if (key.length > 80) throw new HttpError(400, 'Idempotency-Key is too long');
+    return key;
+  }
+
   app.post('/api/run', asyncRoute(async (req, res) => {
     const user = auth(req);
     await assertVerified(db, user.sub);
@@ -243,9 +250,11 @@ export function createApp(deps: AppDeps) {
     const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(body.problemVersionId) });
     if (!version) throw new HttpError(404, 'Problem version not found');
     await submitLimit(user.sub);
-    const queued = await enqueueSubmission(db, { ...body, userId: user.sub, kind: 'practice' });
-    await redis.xadd(queued.stream, '*', 'submissionId', queued.id);
-    res.status(202).json({ id: queued.id });
+    const queued = await enqueueSubmission(db, { ...body, userId: user.sub, kind: 'practice', idempotencyKey: idempotencyKey(req) });
+    if (!queued.replay) {
+      await redis.xadd(queued.stream, '*', 'submissionId', queued.id);
+    }
+    res.status(queued.replay ? 200 : 202).json({ id: queued.id, replay: queued.replay });
   }));
 
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {

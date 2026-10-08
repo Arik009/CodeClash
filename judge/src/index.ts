@@ -15,6 +15,7 @@ const redis = new Redis(redisUrl);
 const workerId = process.env.WORKER_ID ?? `worker-${hostname()}`;
 const slots = Math.max(1, Number(process.env.JUDGE_SLOTS ?? 4));
 const group = 'judges';
+const reclaimIdleMs = 60_000;
 
 for (const stream of ['judge:contest', 'judge:practice']) {
   try {
@@ -31,10 +32,11 @@ function submissionIdOf(fields: string[]) {
   return undefined;
 }
 
+/** Entries left unacked here are picked up by another worker through XAUTOCLAIM. */
 async function handle(stream: string, id: string, submissionId: string) {
   const token = randomBytes(16).toString('hex');
   const claimed = await db.collection('submissions').findOneAndUpdate(
-    { _id: new ObjectId(submissionId), status: 'queued' },
+    { _id: new ObjectId(submissionId), status: { $in: ['queued', 'claimed', 'running'] } },
     { $set: { status: 'claimed', claimToken: token, workerId } },
     { returnDocument: 'after' },
   );
@@ -74,6 +76,13 @@ async function slotLoop(index: number) {
         const submissionId = submissionIdOf(fields);
         if (submissionId) await handle(stream, id, submissionId);
         else await conn.xack(stream, group, id);
+      }
+    }
+    for (const stream of ['judge:contest', 'judge:practice']) {
+      const [, entries] = await conn.xautoclaim(stream, group, consumer, reclaimIdleMs, '0-0', 'COUNT', 1) as [string, Entry[]];
+      for (const [id, fields] of entries ?? []) {
+        const submissionId = submissionIdOf(fields);
+        if (submissionId) await handle(stream, id, submissionId);
       }
     }
   }

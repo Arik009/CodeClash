@@ -37,5 +37,21 @@ async function runInSandbox(input: Parameters<RunCase>[0]) {
   return runInDocker(input);
 }
 
+// A submission saved while Redis was unreachable never reached the stream; send it again.
+setInterval(() => {
+  void (async () => {
+    const cutoff = new Date(Date.now() - 120_000);
+    const stuck = await db.collection('submissions')
+      .find({ status: 'queued', submittedAt: { $lt: cutoff }, $or: [{ requeuedAt: { $exists: false } }, { requeuedAt: { $lt: cutoff } }] })
+      .limit(100)
+      .toArray();
+    for (const row of stuck) {
+      await redis.xadd(row.kind === 'contest' ? 'judge:contest' : 'judge:practice', '*', 'submissionId', String(row._id));
+      await db.collection('submissions').updateOne({ _id: row._id }, { $set: { requeuedAt: new Date() } });
+    }
+    if (stuck.length) log.info({ count: stuck.length }, 'requeued stuck submissions');
+  })().catch((error) => log.info({ err: error }, 'requeue'));
+}, 60_000);
+
 const port = Number(process.env.PORT ?? 4000);
 server.listen(port, () => log.info({ port }, 'codeclash server listening'));

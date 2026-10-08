@@ -105,6 +105,27 @@ describe('practice', () => {
     expect(sent.status).toBe(202);
     expect((await api('post', '/api/practice/submissions', ravi.token, { problemVersionId: String(new ObjectId()), language: 'python', code: 'x' })).status).toBe(404);
   });
+
+  it('replays the same idempotency key and runs samples without storing', async () => {
+    const first = await request(app)
+      .post('/api/practice/submissions')
+      .set('authorization', `Bearer ${ravi.token}`)
+      .set('idempotency-key', 'practice-once')
+      .send({ problemVersionId: versionId, language: 'python', code: 'print(1)' });
+    const second = await request(app)
+      .post('/api/practice/submissions')
+      .set('authorization', `Bearer ${ravi.token}`)
+      .set('idempotency-key', 'practice-once')
+      .send({ problemVersionId: versionId, language: 'python', code: 'print(9)' });
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(200);
+    expect(second.body.replay).toBe(true);
+    expect(second.body.id).toBe(first.body.id);
+
+    const ran = await api('post', '/api/run', neha.token, { problemVersionId: versionId, language: 'python', code: '# REF' });
+    expect(ran.body.results[0].verdict).toBe('AC');
+    expect(await db.collection('submissions').countDocuments({ code: '# REF' })).toBe(0);
+  });
 });
 
 describe('accounts and administration', () => {
