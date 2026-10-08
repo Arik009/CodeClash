@@ -116,3 +116,9 @@ npx playwright test
 ```
 
 `BROWSER_CHANNEL=msedge npx playwright test` uses installed Edge instead of downloading Chromium.
+
+These need `npm run dev` already running:
+
+```bash
+node tests/failure/run.mjs redis mongo   # failure drills; see tests/failure/README.md
+```
