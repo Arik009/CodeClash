@@ -1,9 +1,10 @@
-import { FilePlus2, FileUp, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-react';
+import { Bot, FilePlus2, FileUp, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, isAbort } from '../api';
 import { ProblemView } from '../problem';
 import { Alert, Editor, Empty, errorText, LANGUAGES, StatusPill, toast, type Language } from '../ui';
+import { Hardening } from './Hardening';
 
 interface ProblemRow { problemId: string; versionId: string; version: number; title: string; status: string }
 interface Test { input: string; output: string; hidden: boolean; group?: string }
@@ -29,7 +30,7 @@ interface Version {
   report: string[];
 }
 interface SpecCheck { ok: boolean; parseError: string | null; failures: { test: number; error: string }[]; checked: number; drafted: string | null }
-type Section = 'statement' | 'tests' | 'spec' | 'solutions';
+type Section = 'statement' | 'tests' | 'spec' | 'solutions' | 'agent';
 
 const EDITABLE = ['draft', 'blocked'];
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,6 +48,7 @@ export function Authoring() {
   const [version, setVersion] = useState<Version | null>(null);
   const [dirty, setDirty] = useState(false);
   const [section, setSection] = useState<Section>('statement');
+  const [hardenRequest, setHardenRequest] = useState(0);
   const [specCheck, setSpecCheck] = useState<SpecCheck | null>(null);
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -177,6 +179,19 @@ export function Authoring() {
     });
   }
 
+  function harden() {
+    if (dirty && !window.confirm('Hardening uses the saved version. Continue without saving?')) return;
+    setSection('agent');
+    setHardenRequest((n) => n + 1);
+  }
+
+  async function approved(nextVersionId: string) {
+    await loadProblems();
+    setDirty(false);
+    if (nextVersionId === versionId) await loadVersion(nextVersionId);
+    else setParams({ v: nextVersionId });
+  }
+
   async function checkSpec() {
     if (!version) return;
     await guarded('spec', async () => {
@@ -286,6 +301,7 @@ export function Authoring() {
                 <div className="row">
                   {!editable && version.status !== 'checking' ? <button className="btn sm" type="button" onClick={newVersion} disabled={working !== ''}><Plus size={14} /> new version</button> : null}
                   <button className="btn sm" type="button" disabled={!editable || working !== '' || !dirty} onClick={save}><Save size={14} /> {working === 'save' ? 'saving…' : 'save'}</button>
+                  <button className="btn sm" type="button" disabled={!version.reference || version.tests.length === 0 || working !== ''} onClick={harden}><Bot size={14} /> harden tests</button>
                   <button className="btn primary sm" type="button" disabled={!editable || !version.reference || working !== ''} onClick={publishCheck}>
                     <ShieldCheck size={14} /> {working === 'check' || version.status === 'checking' ? 'checking in sandbox…' : 'publish check'}
                   </button>
@@ -301,7 +317,7 @@ export function Authoring() {
               {!editable ? <Alert tone="info">This version is {version.status} and cannot change. {version.status !== 'checking' ? 'Start a new version to edit it.' : 'Wait for the check to finish.'}</Alert> : null}
 
               <nav className="tabs" role="tablist" aria-label="Sections">
-                {([['statement', 'statement'], ['tests', 'tests'], ['spec', 'spec'], ['solutions', 'solutions']] as const).map(([key, name]) => (
+                {([['statement', 'statement'], ['tests', 'tests'], ['spec', 'spec'], ['solutions', 'solutions'], ['agent', 'hardening']] as const).map(([key, name]) => (
                   <button key={key} type="button" role="tab" aria-selected={section === key} className={`tab ${section === key ? 'on' : ''}`} onClick={() => setSection(key)}>
                     {name}
                     {key === 'tests' ? <span className="count">{version.tests.length}</span> : null}
@@ -445,7 +461,7 @@ export function Authoring() {
                       <p className="section-title">Wrong solutions <span className="muted small">· each must fail at least one test</span></p>
                       <button className="btn sm" type="button" onClick={() => patch({ wrongSolutions: [...version.wrongSolutions, { label: `wrong-${version.wrongSolutions.length + 1}`, language: 'python', code: '' }] })}><Plus size={14} /> add</button>
                     </div>
-                    {version.wrongSolutions.length === 0 ? <p className="muted small">None yet.</p> : null}
+                    {version.wrongSolutions.length === 0 ? <p className="muted small">None yet. The agent can propose some from the agent tab.</p> : null}
                     {version.wrongSolutions.map((solution, index) => (
                       <SolutionEditor
                         key={index}
@@ -459,6 +475,18 @@ export function Authoring() {
                   </>
                 ) : null}
               </fieldset>
+
+              {section === 'agent' ? (
+                <Hardening
+                  problemId={version.problemId}
+                  versionId={version.versionId}
+                  hasReference={!!version.reference && version.tests.length > 0}
+                  startRequest={hardenRequest}
+                  onStartHandled={() => setHardenRequest(0)}
+                  onApproved={(id) => { void approved(id); }}
+                  onDraftSpec={(spec) => { patch({ inputSpec: spec }); setSection('spec'); }}
+                />
+              ) : null}
               </div>
             </div>
           )}

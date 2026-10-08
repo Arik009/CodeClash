@@ -12,7 +12,9 @@ import { auditCollection } from '../db/audit.js';
 import { transitionContest } from '../domain/contests.js';
 import { HttpError, isDuplicateKey } from '../domain/errors.js';
 import { enqueueSubmission, latestPublished, publishedVersions } from '../domain/judging.js';
-import { assertArchiveAccess, runPublishCheck, testsFromZip, type RunCase } from '../domain/problems.js';
+import { HARDEN_STREAM } from '@codeclash/agent/worker';
+import { providerFromEnv } from '@codeclash/agent/providers';
+import { approveProposals, assertArchiveAccess, runPublishCheck, testsFromZip, type RunCase } from '../domain/problems.js';
 import { reserveSeat, withdrawSeat } from '../domain/registration.js';
 import { leaderboard } from '../domain/scoring.js';
 import { checkPassword, hashPassword, issueRefresh, readAccess, revokeRefresh, rotateRefresh, signAccess } from './auth.js';
@@ -60,6 +62,27 @@ function optionalAuth(req: Request) {
 }
 
 const STAFF: Role[] = ['setter', 'organiser', 'admin'];
+
+/** Max-size inputs can be a megabyte, so lists carry a preview and the length. */
+function proposalView(row: Record<string, unknown>) {
+  const input = String(row.input ?? row.stdin ?? '');
+  return {
+    id: String(row._id),
+    runId: row.runId ? String(row.runId) : null,
+    type: (row.type ?? row.kind) as string,
+    input: input.length > 4000 ? `${input.slice(0, 4000)}…` : input,
+    inputLength: input.length,
+    expected: String(row.expected ?? '').slice(0, 4000),
+    language: row.language ?? null,
+    code: row.code ?? '',
+    reason: row.reason ?? '',
+    source: row.source ?? 'deterministic',
+    attack: row.attack ?? null,
+    targetMutationId: row.targetMutationId ? String(row.targetMutationId) : null,
+    evidence: row.evidence ?? null,
+    status: row.status,
+  };
+}
 const STARTED = ['running', 'frozen', 'ended', 'published'];
 
 async function audit(
@@ -908,6 +931,166 @@ export function createApp(deps: AppDeps) {
       throw error;
     }
     res.status(202).json({ status: 'checking' });
+  }));
+
+  /** The server only records and enqueues a run; the agent worker does the work. */
+  app.post('/api/problem-versions/:id/hardening-runs', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['setter', 'admin']);
+    const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(req.params.id) });
+    if (!version) throw new HttpError(404, 'Version not found');
+    if (!version.reference) throw new HttpError(400, 'Add a reference solution first');
+    if (!((version.tests as unknown[]) ?? []).length) throw new HttpError(400, 'Add at least one test first');
+    const now = new Date();
+    let runId: ObjectId;
+    try {
+      runId = (await db.collection('hardening_runs').insertOne({
+        problemId: version.problemId,
+        baseVersionId: version._id,
+        status: 'queued',
+        actor: user.sub,
+        createdAt: now,
+        updatedAt: now,
+      })).insertedId;
+    } catch (error) {
+      if (isDuplicateKey(error)) throw new HttpError(409, 'A hardening run is already queued or running for this version');
+      throw error;
+    }
+    try {
+      await deps.redis.xadd(HARDEN_STREAM, '*', 'runId', String(runId));
+    } catch {
+      await db.collection('hardening_runs').updateOne({ _id: runId }, { $set: { status: 'failed', error: 'The job queue is unavailable', finishedAt: new Date() } });
+      throw new HttpError(503, 'The job queue is unavailable; try again shortly');
+    }
+    await audit(db, user.sub, 'hardening.start', String(version._id), 'allow', { after: String(runId) });
+    res.status(202).json({ runId: String(runId), status: 'queued' });
+  }));
+
+  app.get('/api/problems/:id/hardening-runs', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const rows = await db.collection('hardening_runs')
+      .find({ problemId: new ObjectId(req.params.id) })
+      .project({ metrics: 1, status: 1, aiStatus: 1, baseVersionId: 1, createdAt: 1, finishedAt: 1, proposals: 1 })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .toArray();
+    res.json(rows.map((run) => ({
+      id: String(run._id),
+      baseVersionId: String(run.baseVersionId),
+      status: run.status,
+      aiStatus: run.aiStatus ?? null,
+      score: run.metrics?.score ?? null,
+      proposals: run.proposals ?? 0,
+      createdAt: run.createdAt,
+      finishedAt: run.finishedAt ?? null,
+    })));
+  }));
+
+  app.get('/api/hardening-runs/:id', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const run = await db.collection('hardening_runs').findOne({ _id: new ObjectId(req.params.id) });
+    if (!run) throw new HttpError(404, 'Run not found');
+    const [mutations, proposals] = await Promise.all([
+      db.collection('mutations').find({ runId: run._id }).project({ code: 0 }).sort({ _id: 1 }).toArray(),
+      db.collection('proposals').find({ runId: run._id }).sort({ _id: 1 }).toArray(),
+    ]);
+    res.json({
+      id: String(run._id),
+      problemId: String(run.problemId),
+      baseVersionId: String(run.baseVersionId),
+      status: run.status,
+      stage: run.stage ?? null,
+      aiStatus: run.aiStatus ?? null,
+      metrics: run.metrics ?? null,
+      notes: run.notes ?? [],
+      draftedSpec: run.draftedSpec ?? null,
+      calls: run.calls ?? 0,
+      tokens: run.tokens ?? 0,
+      error: run.error ?? null,
+      createdAt: run.createdAt,
+      startedAt: run.startedAt ?? null,
+      finishedAt: run.finishedAt ?? null,
+      mutations: mutations.map((m) => ({
+        id: String(m._id),
+        key: m.key,
+        operator: m.operator,
+        source: m.source,
+        description: m.description,
+        diff: m.diff ?? null,
+        status: m.status,
+        survivedRandom: m.survivedRandom ?? 0,
+        killedByProposalId: m.killedByProposalId ? String(m.killedByProposalId) : null,
+      })),
+      proposals: proposals.map(proposalView),
+    });
+  }));
+
+  app.post('/api/hardening-runs/:id/cancel', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['setter', 'admin']);
+    const updated = await db.collection('hardening_runs').updateOne(
+      { _id: new ObjectId(req.params.id), status: { $in: ['queued', 'running'] } },
+      { $set: { status: 'cancelled', finishedAt: new Date(), updatedAt: new Date() } },
+    );
+    if (updated.matchedCount === 0) throw new HttpError(409, 'Only a queued or running run can be cancelled');
+    await audit(db, user.sub, 'hardening.cancel', req.params.id, 'allow');
+    res.json({ status: 'cancelled' });
+  }));
+
+  app.post('/api/hardening-runs/:id/approve', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['setter', 'admin']);
+    const body = z.object({ proposalIds: z.array(z.string().regex(/^[0-9a-f]{24}$/)).min(1).max(50) }).parse(req.body);
+    const runId = new ObjectId(req.params.id);
+    const owned = await db.collection('proposals').countDocuments({ _id: { $in: body.proposalIds.map((id) => new ObjectId(id)) }, runId });
+    if (owned !== new Set(body.proposalIds).size) throw new HttpError(400, 'Every proposal must come from this run');
+    res.json(await approveProposals(db, [...new Set(body.proposalIds)], user.sub));
+  }));
+
+  app.get('/api/agent/status', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const config = providerFromEnv();
+    const start = new Date();
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+    const used = await auditCollection(db).aggregate([
+      { $match: { action: 'agent.tool', at: { $gte: start } } },
+      { $group: { _id: null, tokens: { $sum: '$payload.tokens' } } },
+    ]).toArray();
+    const monthly = { used: (used[0]?.tokens as number) ?? 0, cap: Number(process.env.AGENT_MONTHLY_TOKEN_CAP ?? 200_000) };
+    const recent = await db.collection('hardening_runs')
+      .find({ aiStatus: { $in: ['RATE_LIMITED', 'ERROR'] }, finishedAt: { $gt: new Date(Date.now() - 15 * 60_000) } })
+      .sort({ finishedAt: -1 }).limit(1).next();
+    let status: string = config.status;
+    if (status === 'AVAILABLE' && monthly.used >= monthly.cap) status = 'BUDGET_EXCEEDED';
+    else if (status === 'AVAILABLE' && recent) status = recent.aiStatus as string;
+    res.json({
+      status,
+      provider: config.provider?.name ?? null,
+      model: config.provider?.model ?? null,
+      reason: config.reason,
+      monthly,
+      runTokenCap: Number(process.env.AGENT_RUN_TOKEN_CAP ?? 20_000),
+    });
+  }));
+
+  app.get('/api/problem-versions/:id/proposals', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const rows = await db.collection('proposals').find({ problemVersionId: new ObjectId(req.params.id) }).sort({ createdAt: -1 }).limit(100).toArray();
+    res.json(rows.map(proposalView));
+  }));
+
+  app.post('/api/proposals/:id/approve', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['setter', 'admin']);
+    res.json(await approveProposals(db, [req.params.id], user.sub));
+  }));
+
+  app.post('/api/proposals/:id/reject', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['setter', 'admin']);
+    const updated = await db.collection('proposals').updateOne(
+      { _id: new ObjectId(req.params.id), status: 'held' },
+      { $set: { status: 'rejected', rejectedBy: user.sub } },
+    );
+    if (updated.matchedCount === 0) throw new HttpError(404, 'Proposal is not waiting');
+    await audit(db, user.sub, 'proposal.reject', req.params.id, 'deny');
+    res.json({ ok: true });
   }));
 
   app.get('/api/admin/audit', asyncRoute(async (req, res) => {

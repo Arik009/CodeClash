@@ -159,7 +159,7 @@ export function Admin({ me }: { me: string }) {
                   {audit.map((row) => (
                     <tr key={row._id}>
                       <td className="nowrap small num">{new Date(row.at).toLocaleString()}</td>
-                      <td className="clip">{row.actor}</td>
+                      <td className="clip">{row.actorType === 'agent' ? <span className="pill accent">agent</span> : null} {row.actor}</td>
                       <td><code>{row.action}</code></td>
                       <td className="clip muted">{row.target}</td>
                       <td><span className={`pill ${DECISION_TONE[row.decision] ?? ''}`}>{row.decision}</span></td>

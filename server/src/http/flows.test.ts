@@ -1,4 +1,6 @@
+import { processRun } from '@codeclash/agent/worker';
 import AdmZip from 'adm-zip';
+import vm from 'node:vm';
 import { hash } from '@node-rs/argon2';
 import type { Express } from 'express';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
@@ -174,6 +176,137 @@ describe('authoring', () => {
     expect((await api('patch', `/api/problem-versions/${v2}`, setter, { editorial: 'Double it.' })).status).toBe(200);
     expect((await api('get', `/api/problem-versions/${new ObjectId()}`, setter)).status).toBe(404);
     expect((await api('post', `/api/problems/${new ObjectId()}/versions`, setter, {})).status).toBe(404);
+  });
+});
+
+/** Runs JavaScript in-process so the worker's mutants really execute. */
+const jsBatch = async (req: { code: string; inputs: string[] }) => ({
+  compileError: null,
+  cases: req.inputs.map((input) => {
+    const out: string[] = [];
+    try {
+      vm.runInNewContext(req.code, {
+        require: () => ({ readFileSync: () => input }),
+        console: { log: (...parts: unknown[]) => out.push(parts.map(String).join(' ')) },
+        Number,
+      }, { timeout: 200 });
+      return { exitCode: 0, timedOut: false, ms: 1, stdout: `${out.join('\n')}\n`, stderr: '' };
+    } catch (error) {
+      return { exitCode: 1, timedOut: /timed out/.test(String(error)), ms: 1, stdout: '', stderr: String(error) };
+    }
+  }),
+});
+
+const MAX_CODE = [
+  "const d = require('fs').readFileSync(0, 'utf8').trim().split(/\\s+/).map(Number);",
+  'let best = d[1];',
+  'for (let i = 2; i <= d[0]; i++) if (d[i] > best) best = d[i];',
+  'console.log(best);',
+].join('\n');
+
+describe('test-hardening agent', () => {
+  let maxProblem = '';
+  let maxVersion = '';
+  let runId = '';
+
+  it('refuses a version without a reference or tests', async () => {
+    const bare = await api('post', '/api/problems', setter, { title: 'Bare', statement: 'No reference yet.' });
+    expect((await api('post', `/api/problem-versions/${bare.body.versionId}/hardening-runs`, setter)).status).toBe(400);
+    expect((await api('post', `/api/problem-versions/${bare.body.versionId}/hardening-runs`, neha.token)).status).toBe(403);
+  });
+
+  it('only enqueues: one active run per version, handed to the agent stream', async () => {
+    const created = await api('post', '/api/problems', setter, { title: 'Largest', statement: 'Print the largest of n integers.', difficulty: 'hard', tags: ['arrays'] });
+    ({ problemId: maxProblem, versionId: maxVersion } = created.body);
+    await api('put', `/api/problem-versions/${maxVersion}/tests`, setter, {
+      tests: [{ input: '3\n1 5 2\n', output: '5\n', hidden: false }, { input: '1\n7\n', output: '7\n' }],
+      subtasks: [{ name: 'all', points: 100 }],
+      reference: { language: 'javascript', code: MAX_CODE },
+      limits: { javascript: { timeMs: 1500, memoryMb: 256 } },
+    });
+    expect((await api('patch', `/api/problem-versions/${maxVersion}`, setter, { inputSpec: 'n float 1..2' })).status).toBe(400);
+    expect((await api('patch', `/api/problem-versions/${maxVersion}`, setter, { inputSpec: 'n int 1..1000\na int[n] -100..100' })).status).toBe(200);
+    await db.collection('problem_versions').updateOne({ _id: new ObjectId(maxVersion) }, { $set: { source: { name: 'Example', license: 'CC BY 4.0' } } });
+    const good = await api('post', `/api/problem-versions/${maxVersion}/spec-check`, setter, { inputSpec: 'n int 1..1000\na int[n] -100..100' });
+    expect(good.body).toMatchObject({ ok: true, checked: 2, failures: [] });
+    const tight = await api('post', `/api/problem-versions/${maxVersion}/spec-check`, setter, { inputSpec: 'n int 1..2\na int[n] 1..5' });
+    expect(tight.body.failures).toEqual([{ test: 1, error: 'line 1: n = 3 is outside 1..2' }, { test: 2, error: 'line 2: a = 7 is outside 1..5' }]);
+    expect((await api('post', `/api/problem-versions/${maxVersion}/spec-check`, setter, { inputSpec: 'x float' })).body.parseError).toMatch(/line 1/);
+
+    const started = await api('post', `/api/problem-versions/${maxVersion}/hardening-runs`, setter);
+    expect(started.status).toBe(202);
+    expect(started.body.status).toBe('queued');
+    runId = started.body.runId;
+    expect(redis.added.at(-1)).toEqual(['agent:harden', '*', 'runId', runId]);
+    expect((await api('post', `/api/problem-versions/${maxVersion}/hardening-runs`, setter)).status).toBe(409);
+    expect((await api('get', `/api/hardening-runs/${runId}`, setter)).body).toMatchObject({ status: 'queued', mutations: [], proposals: [] });
+  });
+
+  it('reports the agent status without a configured model', async () => {
+    const previous = process.env.AGENT_PROVIDER;
+    process.env.AGENT_PROVIDER = '';
+    const status = await api('get', '/api/agent/status', setter);
+    process.env.AGENT_PROVIDER = previous;
+    expect(status.body).toMatchObject({ status: 'DISABLED', provider: null, model: null, monthly: { cap: expect.any(Number) } });
+    expect((await api('get', '/api/agent/status', neha.token)).status).toBe(403);
+  });
+
+  it('shows the worker result: score, mutants, and proposals with evidence', async () => {
+    const done = await processRun({
+      db,
+      audit: async (row) => { await db.collection('audit').insertOne(row); },
+      monthlyUsed: async () => 0,
+      runBatch: jsBatch,
+      env: {},
+    }, runId);
+    expect(done).toBe('done');
+    const run = (await api('get', `/api/hardening-runs/${runId}`, setter)).body;
+    expect(run).toMatchObject({ status: 'completed', aiStatus: 'DISABLED', baseVersionId: maxVersion, problemId: maxProblem });
+    expect(run.metrics.score).toBeGreaterThanOrEqual(0);
+    expect(run.metrics.projectedScore).toBe(1);
+    expect(run.notes[0]).toBe('AI-assisted analysis unavailable. Running deterministic hardening suite.');
+    expect(run.mutations.some((m: { status: string }) => m.status === 'equivalent')).toBe(true);
+    const survivor = run.mutations.find((m: { diff: { mutated: string } | null }) => m.diff?.mutated.includes('i < d[0]'));
+    expect(survivor).toMatchObject({ status: 'survived', killedByProposalId: expect.any(String) });
+    const killer = run.proposals.find((p: { id: string }) => p.id === survivor.killedByProposalId);
+    expect(killer).toMatchObject({ type: 'test', status: 'held', evidence: { validator: 'valid under the input spec' } });
+    expect(run.proposals.some((p: { type: string }) => p.type === 'performance_test')).toBe(true);
+    const list = (await api('get', `/api/problems/${maxProblem}/hardening-runs`, setter)).body;
+    expect(list[0]).toMatchObject({ id: runId, status: 'completed', proposals: run.proposals.length });
+    expect((await api('get', `/api/hardening-runs/${new ObjectId()}`, setter)).status).toBe(404);
+    expect(await db.collection('audit').countDocuments({ actorType: 'agent', action: 'agent.tool' })).toBeGreaterThan(0);
+  });
+
+  it('approves several proposals onto the draft and keeps every field', async () => {
+    const run = (await api('get', `/api/hardening-runs/${runId}`, setter)).body;
+    const ids = run.proposals.map((p: { id: string }) => p.id) as string[];
+    expect((await api('post', `/api/hardening-runs/${runId}/approve`, setter, { proposalIds: [String(new ObjectId())] })).status).toBe(400);
+    const approved = await api('post', `/api/hardening-runs/${runId}/approve`, setter, { proposalIds: ids });
+    expect(approved.body.versionId).toBe(maxVersion);
+    const grown = (await api('get', `/api/problem-versions/${maxVersion}`, setter)).body;
+    expect(grown.tests).toHaveLength(2 + ids.length);
+    expect(grown).toMatchObject({
+      difficulty: 'hard', tags: ['arrays'], subtasks: [{ name: 'all', points: 100 }], inputSpec: 'n int 1..1000\na int[n] -100..100',
+      source: { name: 'Example' }, limits: { javascript: { timeMs: 1500 } }, status: 'draft',
+    });
+    expect((await api('post', `/api/hardening-runs/${runId}/approve`, setter, { proposalIds: ids })).status).toBe(404);
+    expect((await api('post', `/api/proposals/${ids[0]}/reject`, setter)).status).toBe(404);
+  });
+
+  it('cancels a queued run once, and the worker then skips it', async () => {
+    const started = await api('post', `/api/problem-versions/${maxVersion}/hardening-runs`, setter);
+    expect((await api('post', `/api/hardening-runs/${started.body.runId}/cancel`, setter)).body).toEqual({ status: 'cancelled' });
+    expect((await api('post', `/api/hardening-runs/${started.body.runId}/cancel`, setter)).status).toBe(409);
+    const skipped = await processRun({ db, audit: async () => {}, monthlyUsed: async () => 0, runBatch: jsBatch, env: {} }, started.body.runId);
+    expect(skipped).toBe('skipped');
+  });
+
+  it('rejects a held proposal and lists proposals for a version', async () => {
+    const held = await db.collection('proposals').insertOne({ problemVersionId: new ObjectId(maxVersion), type: 'test', input: '2\n3 4\n', expected: '4\n', status: 'held', createdAt: new Date() });
+    const listed = (await api('get', `/api/problem-versions/${maxVersion}/proposals`, setter)).body;
+    expect(listed.find((p: { id: string }) => p.id === String(held.insertedId))).toMatchObject({ type: 'test', input: '2\n3 4\n', inputLength: 6 });
+    expect((await api('post', `/api/proposals/${held.insertedId}/reject`, setter)).body).toEqual({ ok: true });
+    expect((await api('post', `/api/proposals/${held.insertedId}/reject`, setter)).status).toBe(404);
   });
 });
 

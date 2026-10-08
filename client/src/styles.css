@@ -455,8 +455,46 @@ form.author-work { margin: 0; }
 .solution { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; margin-bottom: 0.75rem; background: var(--surface); }
 .solution-head { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--line); }
 .solution-head input, .solution-head select { width: auto; min-height: 30px; padding-top: 0.2rem; padding-bottom: 0.2rem; font-size: 0.82rem; }
+.proposal { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; background: var(--bg); }
+.proposal-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.55rem 0.8rem; background: var(--surface); border-bottom: 1px solid var(--line); }
+.proposal-body { display: grid; grid-template-columns: 1fr 1fr; }
+.proposal-body > div { padding: 0.6rem 0.8rem; min-width: 0; }
+.proposal-body > div + div { border-left: 1px solid var(--line); }
+.proposal-body pre { font-size: 0.8rem; max-height: 10rem; overflow: auto; }
 .file { position: relative; overflow: hidden; }
 .file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+/* ---------- hardening dashboard ---------- */
+.harden { display: grid; gap: var(--space-4); }
+.harden-bar { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.harden-bar select { width: auto; min-height: 30px; padding-top: 0.2rem; padding-bottom: 0.2rem; font-size: 0.8rem; }
+.harden-notes { margin: 0; padding: 0.6rem 0.9rem 0.6rem 1.9rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); font-size: 0.82rem; color: var(--muted); }
+.harden-notes li + li { margin-top: 0.25rem; }
+.harden-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+.harden-stats .stat { align-content: start; padding: 0.75rem 0.9rem; border-right: 1px solid var(--line); background: var(--bg); }
+.harden-stats .stat:last-child { border-right: 0; }
+.harden-stats .stat-value { font-family: var(--mono); font-size: 1.35rem; font-weight: 700; color: var(--fg); font-variant-numeric: tabular-nums; }
+.harden-stats .stat-label { font-size: 0.72rem; color: var(--muted); }
+.harden-stats .stat.strong { background: var(--accent-soft); }
+.harden-stats .stat.strong .stat-value { color: var(--accent); }
+.harden-foot { margin: -0.4rem 0 0; }
+.harden-facts { padding: 0.9rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.mutants { display: grid; gap: 0.5rem; }
+.mutant { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); overflow: hidden; }
+.mutant-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.8rem; background: var(--surface); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.mutant > p { margin: 0; padding: 0.55rem 0.8rem; }
+.diff { margin: 0; padding: 0.55rem 0.8rem; font-size: 0.8rem; overflow-x: auto; border: 0; border-radius: 0; }
+.diff .del { color: var(--bad); }
+.diff .add { color: var(--ok); }
+.proposal-why { margin: 0; padding: 0.55rem 0.8rem 0; }
+.checks { list-style: none; display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; margin: 0; padding: 0.45rem 0.8rem 0.6rem; font-size: 0.78rem; }
+.checks li::before { content: "✓ "; font-weight: 700; }
+.checks li.ok { color: var(--ok); }
+.checks li.warn { color: var(--warn); }
+.checks li.warn::before { content: "! "; }
+.evidence { border-top: 1px solid var(--line); }
+.evidence summary { cursor: pointer; padding: 0.45rem 0.8rem; font-size: 0.78rem; color: var(--muted); }
 .mono-area { font-family: var(--mono); font-size: 0.85rem; }
 .spec-help pre { font-size: 0.78rem; overflow-x: auto; }
 
@@ -509,6 +547,7 @@ td select { min-height: 30px; padding-top: 0.2rem; padding-bottom: 0.2rem; width
   .contest-bar { grid-template-columns: 1fr; }
   .clock-block { text-align: left; }
   .sample, .proposal-body { grid-template-columns: 1fr; }
+  .harden-stats .stat { border-right: 0; border-bottom: 1px solid var(--line); }
   .sample > div + div, .proposal-body > div + div { border-left: 0; border-top: 1px solid var(--line); }
   .g-line { grid-template-columns: 1fr; gap: 0.15rem; }
   .test-item { grid-template-columns: 1fr; }

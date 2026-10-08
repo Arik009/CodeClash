@@ -83,6 +83,31 @@ A new account has to confirm its email before it can take a seat or submit. In l
 
 In the editor, Ctrl+Enter submits. The palette icon in the header changes the theme. The choice is saved in this browser.
 
+## Test hardening
+
+In Authoring, **Harden tests** checks whether a problem's tests are strong enough. The agent process runs it in the background:
+
+1. **Mutants.** Small deliberate bugs are made in the reference solution: an off-by-one in a loop bound or constant, a flipped comparison or operator, swapped `min` and `max`, a removed `break`, or a 64-bit type narrowed to 32 bits. A mutant that the current tests do not catch is a hole in the tests.
+2. **Attacks.** If the problem has an input spec, the engine generates boundary, random and maximum-size inputs, gets the expected output from the reference, and keeps the inputs that kill surviving mutants. Mutants that agree with the reference on every generated input are reported as probably equivalent instead of being counted against the tests.
+3. **Score.** The run reports the share of non-equivalent mutants killed, plus whether any test is near the maximum input size.
+4. **Optional AI.** With a provider configured, a model plans extra attacks and suggests inputs for survivors. Without one, everything above still runs and the run shows the AI as disabled.
+
+Every proposed test waits for the setter's approval, and an approval is applied in a single transaction.
+
+### Input spec
+
+One line per input line, for example:
+
+```text
+n int 1..2*10^5
+a int[n] -10^9..10^9
+s str[1..10^5] ()
+lines m: u int 1..n, v int 1..n
+sum n <= 2*10^5
+```
+
+The Spec tab validates every existing test against the spec and can draft one from the statement's constraints.
+
 ## Configuration
 
 You do not need a `.env` file for the local demo. The API, judge, and agent use the same defaults as `.env.example`.
