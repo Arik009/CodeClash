@@ -162,10 +162,15 @@ npx playwright test
 These need `npm run dev` already running:
 
 ```bash
+node tests/smoke/live.mjs
+node tests/smoke/ui.mjs
 npm run verify:catalog -w server         # every catalog reference passes, every wrong solution fails
+node tests/load/run.mjs                  # k6 in Docker; results in tests/load/results/k6.md
 node tests/load/judge-batch.mjs          # judge timing with and without JUDGE_BATCH
 node tests/failure/run.mjs redis mongo   # failure drills; see tests/failure/README.md
 ```
+
+Latest numbers: the read API held 100 requests per second with a p95 of 45 ms, and 50 users refreshing the leaderboard got a p95 of 24 ms, with no failed requests. Batch judging was 5.9 times faster for Python, 10.5 times for C++ and 6.7 times for Java on 12 tests (`tests/load/results/`).
 
 ## Useful commands
 
