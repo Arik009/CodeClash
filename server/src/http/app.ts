@@ -657,7 +657,9 @@ export function createApp(deps: AppDeps) {
   }));
 
   app.get('/api/contests/:id/leaderboard', asyncRoute(async (req, res) => {
-    res.json(await leaderboard(db, req.params.id));
+    const viewer = optionalAuth(req);
+    const reveal = viewer !== null && (viewer.role === 'organiser' || viewer.role === 'admin');
+    res.json(await leaderboard(db, req.params.id, { reveal }));
   }));
 
   async function queueOutbox(type: string, payload: Record<string, unknown>) {

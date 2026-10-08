@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, Clock, List, Lock, Trophy, UserPlus, Users, X } from 'lucide-react';
+import { ArrowLeft, Check, Clock, List, Lock, Snowflake, Trophy, UserPlus, Users, X } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
@@ -16,6 +16,7 @@ interface BoardRow {
   penalty: number;
   quizPoints: number;
   cells?: Record<string, Cell>;
+  pending?: Record<string, number>;
 }
 interface Problem { problemId: string; versionId: string; title: string; statement: string; samples: string; editorial: string | null; limits?: Limits }
 interface Contest {
@@ -167,6 +168,7 @@ export function ContestRoom({ me }: { me: string | null }) {
             <span>{contest.type === 'mixed' ? 'coding + quiz' : contest.type}</span>
             <span><Users size={12} /> {contest.reserved}/{contest.capacity} seats</span>
             <span><Clock size={12} /> {formatWhen(contest.startsAt)} → {formatWhen(contest.endsAt)}</span>
+            {contest.status === 'frozen' ? <span className="warn"><Snowflake size={12} /> standings frozen since {new Date(contest.freezeAt).toLocaleTimeString()}</span> : null}
           </div>
         </div>
         {clock ? (
@@ -359,6 +361,7 @@ function Standings({ contest, board, me }: { contest: Contest; board: BoardRow[]
   if (board.length === 0) return <Empty icon={<Trophy size={28} />} title="No scores yet">Rows appear after the first judged submission.</Empty>;
   return (
     <>
+      {contest.status === 'frozen' ? <Alert tone="warn">The standings are frozen. Attempts after the freeze show as <b>?</b> until results are published.</Alert> : null}
       <div className="table-wrap">
         <table>
           <thead>
@@ -379,7 +382,7 @@ function Standings({ contest, board, me }: { contest: Contest; board: BoardRow[]
                 <td className="c"><strong>{row.solved}</strong></td>
                 {showQuiz ? <td className="c num">{row.quizPoints}</td> : null}
                 <td className="c num muted">{row.penalty}</td>
-                {problems.map((p) => <td key={p.problemId} className="c"><StandingCell cell={row.cells?.[p.problemId]} /></td>)}
+                {problems.map((p) => <td key={p.problemId} className="c"><StandingCell cell={row.cells?.[p.problemId]} pending={row.pending?.[p.problemId] ?? 0} /></td>)}
               </tr>
             ))}
           </tbody>
@@ -389,11 +392,12 @@ function Standings({ contest, board, me }: { contest: Contest; board: BoardRow[]
   );
 }
 
-function StandingCell({ cell }: { cell?: Cell }) {
+function StandingCell({ cell, pending }: { cell?: Cell; pending: number }) {
   if (cell?.solved) {
     const minute = cell.minute ?? 0;
     return <span className="cell ok">{cell.tries ? `+${cell.tries}` : '+'}<small>{Math.floor(minute / 60)}:{String(minute % 60).padStart(2, '0')}</small></span>;
   }
+  if (pending > 0) return <span className="cell pending">?<small>{cell?.tries ? `-${cell.tries} ` : ''}+{pending}</small></span>;
   if (cell && cell.tries > 0) return <span className="cell bad">-{cell.tries}</span>;
   return null;
 }

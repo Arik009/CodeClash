@@ -360,6 +360,21 @@ describe('contest rules', () => {
     })).rejects.toMatchObject({ status: 400 });
   });
 
+  it('accepts submissions while frozen and hides post-freeze solves from the public board', async () => {
+    const { contestId, versionId, uid } = await liveContest({ status: 'frozen' });
+    const queued = await enqueueSubmission(db, {
+      userId: uid, contestId, problemVersionId: versionId, language: 'python', code: 'print(1)', kind: 'contest',
+    });
+    await claimSubmission(db, queued.id, 'tok', 'w');
+    await commitVerdict(db, queued.id, 'tok', 'AC', null);
+    const hidden = await leaderboard(db, contestId);
+    expect(hidden[0]?.solved).toBe(0);
+    const revealed = await leaderboard(db, contestId, { reveal: true });
+    expect(revealed[0]?.solved).toBe(1);
+    await db.collection('contests').updateOne({ _id: new ObjectId(contestId) }, { $set: { status: 'ended' } });
+    expect((await leaderboard(db, contestId))[0]?.solved).toBe(1);
+  });
+
   it('adds quiz points to the standing', async () => {
     const { contestId, uid } = await liveContest({ freezeAt: new Date(Date.now() + 600_000) });
     await db.collection('quiz_answers').insertOne({
