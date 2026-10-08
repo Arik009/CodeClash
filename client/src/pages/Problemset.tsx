@@ -96,7 +96,7 @@ export function Problemset() {
           </div>
           <div className="table-wrap">
             {data === null ? <div className="box-body"><div className="skeleton" /></div> : items.length === 0 ? (
-              <Empty icon={<BookOpenCheck size={28} />} title="No problem matches">Try another name, tag, or difficulty.</Empty>
+              <Empty icon={<BookOpenCheck size={28} />} title="No problem matches">Try another name, tag, or difficulty. Live contest problems stay hidden until results are published.</Empty>
             ) : (
               <table>
                 <thead>

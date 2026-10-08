@@ -6,7 +6,7 @@ export default defineConfig({
     fileParallelism: false,
     coverage: {
       provider: 'v8',
-      include: ['src/decide.ts'],
+      include: ['src/decide.ts', 'src/slots.ts'],
       exclude: ['src/**/*.test.ts'],
       thresholds: { lines: 80, functions: 80, statements: 80 },
     },

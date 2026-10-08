@@ -10,7 +10,7 @@ import { auditCollection } from '../db/audit.js';
 import { transitionContest } from '../domain/contests.js';
 import { HttpError, isDuplicateKey } from '../domain/errors.js';
 import { enqueueSubmission, latestPublished, publishedVersions } from '../domain/judging.js';
-import { runPublishCheck, testsFromZip, type RunCase } from '../domain/problems.js';
+import { assertArchiveAccess, runPublishCheck, testsFromZip, type RunCase } from '../domain/problems.js';
 import { reserveSeat, withdrawSeat } from '../domain/registration.js';
 import { leaderboard } from '../domain/scoring.js';
 import { checkPassword, hashPassword, issueRefresh, readAccess, revokeRefresh, rotateRefresh, signAccess } from './auth.js';
@@ -529,7 +529,18 @@ export function createApp(deps: AppDeps) {
     });
   }));
 
+  app.get('/api/stats', asyncRoute(async (_req, res) => {
+    const [problems, participants, contests, judged] = await Promise.all([
+      archiveRows(db, null).then((rows) => rows.length),
+      db.collection('users').countDocuments({ role: 'participant' }),
+      db.collection('contests').countDocuments({ status: { $in: ['ended', 'published'] } }),
+      db.collection('submissions').estimatedDocumentCount(),
+    ]);
+    res.json({ problems, participants, contests, submissions: judged, languages: SOURCE_LANGUAGES.length });
+  }));
+
   app.get('/api/archive/:problemId', asyncRoute(async (req, res) => {
+    await assertArchiveAccess(db, req.params.problemId);
     const version = await latestPublished(db, new ObjectId(req.params.problemId));
     if (!version) throw new HttpError(404, 'Not in the archive');
     res.json({
@@ -545,6 +556,7 @@ export function createApp(deps: AppDeps) {
   app.get('/api/problem-versions/:id/public', asyncRoute(async (req, res) => {
     const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(req.params.id), status: 'published' });
     if (!version) throw new HttpError(404, 'Not in the archive');
+    await assertArchiveAccess(db, String(version.problemId));
     res.json({
       problemId: String(version.problemId),
       versionId: String(version._id),
@@ -623,6 +635,7 @@ export function createApp(deps: AppDeps) {
     }).parse(req.body);
     const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(body.problemVersionId) });
     if (!version) throw new HttpError(404, 'Problem version not found');
+    await assertArchiveAccess(db, String(version.problemId));
     await submitLimit(user.sub);
     const queued = await enqueueSubmission(db, { ...body, userId: user.sub, kind: 'practice', idempotencyKey: idempotencyKey(req) });
     if (!queued.replay) {
@@ -875,13 +888,18 @@ function tagsByUse(rows: ArchiveRow[]) {
   return [...uses.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([tag]) => tag);
 }
 
-/** Latest published version of every problem, with stats, in two queries. */
+/** Latest published version of every problem not held by an unpublished contest, with stats, in three queries. */
 async function archiveRows(db: Db, viewerId: string | null): Promise<ArchiveRow[]> {
-  const visible = await db.collection('problem_versions').aggregate([
-    { $match: { status: 'published' } },
-    { $sort: { version: -1 } },
-    { $group: { _id: '$problemId', doc: { $first: { _id: '$_id', title: '$title', tags: '$tags', difficulty: '$difficulty', rating: '$rating', source: '$source' } } } },
-  ]).toArray();
+  const [versions, held] = await Promise.all([
+    db.collection('problem_versions').aggregate([
+      { $match: { status: 'published' } },
+      { $sort: { version: -1 } },
+      { $group: { _id: '$problemId', doc: { $first: { _id: '$_id', title: '$title', tags: '$tags', difficulty: '$difficulty', rating: '$rating', source: '$source' } } } },
+    ]).toArray(),
+    db.collection('contests').distinct('problemIds', { status: { $ne: 'published' } }),
+  ]);
+  const hidden = new Set(held.map(String));
+  const visible = versions.filter((row) => !hidden.has(String(row._id)));
   const ids = visible.map((row) => row._id as ObjectId);
   const viewer = viewerId && ObjectId.isValid(viewerId) ? new ObjectId(viewerId) : null;
   const stats = ids.length ? await db.collection('submissions').aggregate([

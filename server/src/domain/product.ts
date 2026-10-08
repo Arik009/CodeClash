@@ -50,6 +50,9 @@ export async function runSamples(
       status: { $in: ['reserved', 'modified', 'competing'] },
     });
     if (!seat) throw new HttpError(403, 'A reserved seat is required');
+  } else {
+    const { assertArchiveAccess } = await import('./problems.js');
+    await assertArchiveAccess(db, String(version.problemId));
   }
   const tests = ((version.tests as { input: string; output: string; hidden?: boolean }[]) ?? []).filter((test) => test.hidden === false);
   if (tests.length === 0) throw new HttpError(400, 'This problem has no sample tests');
@@ -68,6 +71,18 @@ export async function runSamples(
     results.push({ verdict: outcome.verdict, stdout: outcome.stdout.slice(0, 2000) });
   }
   return { results };
+}
+
+export async function problemStats(db: Db, problemId: ObjectId, viewerId: string | null) {
+  const rows = await db.collection('submissions').find({ problemId, verdict: { $ne: null } }).project({ verdict: 1, userId: 1 }).toArray();
+  const accepted = rows.filter((row) => row.verdict === 'AC').length;
+  const acceptance = rows.length === 0 ? null : Math.round((100 * accepted) / rows.length);
+  let status: 'solved' | 'attempted' | 'unsolved' = 'unsolved';
+  if (viewerId) {
+    const mine = rows.filter((row) => String(row.userId) === viewerId);
+    status = mine.some((row) => row.verdict === 'AC') ? 'solved' : mine.length > 0 ? 'attempted' : 'unsolved';
+  }
+  return { acceptance, status, solvedCount: accepted, attempts: rows.length };
 }
 
 export function publicUser(user: { _id: ObjectId; role: Role; displayName: string; email?: string; emailVerified?: boolean; rating?: number }) {

@@ -6,6 +6,7 @@ import {
   compareStanding,
   firstSolveBonusPoints,
   icpcRow,
+  practiceSlotCap,
   problemCells,
   quizScore,
 } from './index.js';
@@ -94,6 +95,12 @@ describe('rules', () => {
     expect(canTransition('draft', 'running')).toBe(false);
     expect(canTransition('draft', 'registration_open')).toBe(true);
     expect(canTransition('running', 'frozen')).toBe(true);
+  });
+
+  it('gives practice at most 20% of slots while a contest runs', () => {
+    expect(practiceSlotCap(24, true)).toBe(4);
+    expect(practiceSlotCap(4, true)).toBe(0);
+    expect(practiceSlotCap(4, false)).toBe(4);
   });
 
   it('keeps the ICPC bonus as a badge', () => {

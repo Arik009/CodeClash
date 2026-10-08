@@ -210,6 +210,7 @@ describe('contest lifecycle', () => {
 
     const hidden = await api('get', `/api/contests/${contestId}`, neha.token);
     expect(hidden.body.problems).toEqual([]);
+    expect((await api('get', `/api/problem-versions/${versionId}/public`)).status).toBe(403);
   });
 
   it('runs: submissions, standings with problem cells, and the frozen board', async () => {

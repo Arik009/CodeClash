@@ -164,3 +164,9 @@ export function firstSolveBonusPoints(maxPoints: number, mode: 'icpc' | 'quiz' |
   if (mode === 'icpc') return 0;
   return Math.round(maxPoints * 0.1);
 }
+
+/** Practice may use at most 20% of slots while a contest is running. */
+export function practiceSlotCap(totalSlots: number, contestRunning: boolean): number {
+  if (!contestRunning) return totalSlots;
+  return Math.floor(totalSlots * 0.2);
+}

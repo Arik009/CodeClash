@@ -5,7 +5,7 @@ import { ensureIndexes } from '../db/indexes.js';
 import { tickContests, transitionContest } from './contests.js';
 import { HttpError } from './errors.js';
 import { claimSubmission, commitVerdict, enqueueSubmission, latestPublished, publishedVersions, reclaimSubmission } from './judging.js';
-import { applyPublishReport, publishDecision, runPublishCheck, testsFromZip } from './problems.js';
+import { applyPublishReport, assertArchiveAccess, publishDecision, runPublishCheck, testsFromZip } from './problems.js';
 import { reserveSeat, seatInvariants, withdrawSeat } from './registration.js';
 import { awardFirstSolve, dispatchOutbox, leaderboard, recomputeStanding } from './scoring.js';
 import AdmZip from 'adm-zip';
@@ -222,6 +222,24 @@ describe('exactly once', () => {
 });
 
 describe('problems', () => {
+  it('hides an unpublished contest problem from the archive', async () => {
+    const problem = await db.collection('problems').insertOne({ title: 'hidden', statement: 's', samples: '', tags: [] });
+    await db.collection('contests').insertOne({
+      title: 'live',
+      status: 'running',
+      problemIds: [problem.insertedId],
+      capacity: 1,
+      reserved: 0,
+      waitlistSeq: 0,
+      type: 'coding',
+      startsAt: new Date(),
+      endsAt: new Date(),
+      freezeAt: new Date(),
+      registrationOpensAt: new Date(),
+      scoringMode: 'icpc',
+    });
+    await expect(assertArchiveAccess(db, String(problem.insertedId))).rejects.toMatchObject({ status: 403 });
+  });
 
   it('reads paired .in and .out files from a zip', () => {
     const zip = new AdmZip();

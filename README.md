@@ -61,7 +61,7 @@ The seed is deterministic (fixed random seed) and can be run again at any time. 
 - **About 6,000 practice submissions** over the last 16 weeks.
 - **60 quiz questions.**
 
-Contest editorials stay hidden until that contest has ended or been published.
+Contest editorials stay hidden until that contest has ended or been published. Problems that belong to a contest show up in the problemset only once that contest is published.
 
 A new account has to confirm its email before it can take a seat or submit. In local development the confirmation token is shown on the sign-up screen. There is no mail server.
 

@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
 import { Redis } from 'ioredis';
 import { MongoClient, ObjectId } from 'mongodb';
+import { canTakePractice } from './slots.js';
 import { judgeCases } from './decide.js';
 import { runInDocker } from './runner.js';
 
@@ -16,6 +17,8 @@ const workerId = process.env.WORKER_ID ?? `worker-${hostname()}`;
 const slots = Math.max(1, Number(process.env.JUDGE_SLOTS ?? 4));
 const group = 'judges';
 const reclaimIdleMs = 60_000;
+/** A claim older than this belongs to a worker that died mid-job; it no longer holds a practice slot. */
+const inflightWindowMs = 5 * 60_000;
 
 for (const stream of ['judge:contest', 'judge:practice']) {
   try {
@@ -37,50 +40,72 @@ async function handle(stream: string, id: string, submissionId: string) {
   const token = randomBytes(16).toString('hex');
   const claimed = await db.collection('submissions').findOneAndUpdate(
     { _id: new ObjectId(submissionId), status: { $in: ['queued', 'claimed', 'running'] } },
-    { $set: { status: 'claimed', claimToken: token, workerId } },
+    { $set: { status: 'claimed', claimToken: token, workerId, claimedAt: new Date() } },
     { returnDocument: 'after' },
   );
   if (!claimed) {
     await redis.xack(stream, group, id);
     return;
   }
-  const version = await db.collection('problem_versions').findOne({ _id: claimed.problemVersionId });
-  const tests = (version?.tests as { input: string; output: string }[]) ?? [];
-  const limits = (version?.limits as Record<string, { timeMs: number; memoryMb: number }>) ?? {};
-  const language = claimed.language as SourceLanguage;
-  const limit = limits[language] ?? defaultLimit(language);
-  await db.collection('submissions').updateOne({ _id: claimed._id, claimToken: token }, { $set: { status: 'running' } });
-  const request = { language, code: claimed.code as string, timeMs: limit.timeMs, memoryMb: limit.memoryMb };
-  const run = (test: { input: string; output: string }) => runInDocker({ ...request, stdin: test.input, expected: test.output });
-  const result = await judgeCases(tests, run);
-  const saved = await db.collection('submissions').updateOne(
-    { _id: claimed._id, claimToken: token, status: { $in: ['claimed', 'running'] } },
-    { $set: { status: 'judged', verdict: result.verdict, reason: result.reason, judgedAt: new Date() } },
-  );
-  if (saved.matchedCount === 1) {
-    await db.collection('outbox').insertOne({
-      type: 'VerdictCommitted',
-      payload: {
-        submissionId,
-        contestId: claimed.contestId ? String(claimed.contestId) : null,
-        userId: String(claimed.userId),
-        problemId: String(claimed.problemId),
-        verdict: result.verdict,
-        kind: claimed.kind,
-        submittedAt: claimed.submittedAt,
-      },
-      createdAt: new Date(),
-      sentAt: null,
-    });
-    await redis.xack(stream, group, id);
+  try {
+    const version = await db.collection('problem_versions').findOne({ _id: claimed.problemVersionId });
+    const tests = (version?.tests as { input: string; output: string; group?: string }[]) ?? [];
+    const limits = (version?.limits as Record<string, { timeMs: number; memoryMb: number }>) ?? {};
+    const language = claimed.language as SourceLanguage;
+    const limit = limits[language] ?? defaultLimit(language);
+    await db.collection('submissions').updateOne({ _id: claimed._id, claimToken: token }, { $set: { status: 'running' } });
+    const request = { language, code: claimed.code as string, timeMs: limit.timeMs, memoryMb: limit.memoryMb };
+    const run = (test: { input: string; output: string }) => runInDocker({ ...request, stdin: test.input, expected: test.output });
+    const result = await judgeCases(tests, run);
+    const saved = await db.collection('submissions').updateOne(
+      { _id: claimed._id, claimToken: token, status: { $in: ['claimed', 'running'] } },
+      { $set: { status: 'judged', verdict: result.verdict, reason: result.reason, judgedAt: new Date() } },
+    );
+    if (saved.matchedCount === 1) {
+      await db.collection('outbox').insertOne({
+        type: 'VerdictCommitted',
+        payload: {
+          submissionId,
+          contestId: claimed.contestId ? String(claimed.contestId) : null,
+          userId: String(claimed.userId),
+          problemId: String(claimed.problemId),
+          verdict: result.verdict,
+          kind: claimed.kind,
+          submittedAt: claimed.submittedAt,
+        },
+        createdAt: new Date(),
+        sentAt: null,
+      });
+      await redis.xack(stream, group, id);
+    }
+  } finally {
+    await db.collection('submissions').updateOne(
+      { _id: claimed._id, claimToken: token, status: { $in: ['claimed', 'running'] } },
+      { $unset: { claimedAt: '' } },
+    );
   }
+}
+
+async function streamsToRead() {
+  const [running, backlog, inflight] = await Promise.all([
+    db.collection('contests').countDocuments({ status: { $in: ['running', 'frozen'] } }),
+    db.collection('submissions').countDocuments({ kind: 'contest', status: 'queued' }),
+    db.collection('submissions').countDocuments({
+      kind: 'practice',
+      status: { $in: ['claimed', 'running'] },
+      claimedAt: { $gt: new Date(Date.now() - inflightWindowMs) },
+    }),
+  ]);
+  const streams = ['judge:contest'];
+  if (canTakePractice(slots, running > 0, inflight, backlog)) streams.push('judge:practice');
+  return streams;
 }
 
 async function slotLoop(index: number) {
   const conn = new Redis(redisUrl);
   const consumer = `${workerId}#${index}`;
   for (;;) {
-    const streams = ['judge:contest', 'judge:practice'];
+    const streams = await streamsToRead();
     const reply = await conn.xreadgroup(
       'GROUP', group, consumer, 'COUNT', 1, 'BLOCK', 2000,
       'STREAMS', ...streams, ...streams.map(() => '>'),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyRun, decide, judgeCases } from './decide.js';
+import { canTakePractice, nextStream } from './slots.js';
 import { dockerArgs } from './runner.js';
 
 describe('verdicts', () => {
@@ -69,6 +70,23 @@ describe('early exit', () => {
     const fullMs = performance.now() - fullStarted;
     expect(early.ran).toBe(1);
     expect(earlyMs).toBeLessThan(fullMs);
+  });
+});
+
+describe('slots', () => {
+  it('keeps at least 80% of slots for a live contest', () => {
+    expect(canTakePractice(24, true, 4)).toBe(false);
+    expect(canTakePractice(24, true, 3)).toBe(true);
+    expect(canTakePractice(4, true, 0)).toBe(false);
+    expect(nextStream(true, true)).toBe('judge:contest');
+    expect(nextStream(false, false)).toBeNull();
+  });
+
+  it('lets practice borrow one idle slot when no contest work is queued', () => {
+    expect(canTakePractice(4, true, 0, 0)).toBe(true);
+    expect(canTakePractice(4, true, 1, 0)).toBe(false);
+    expect(canTakePractice(4, true, 0, 3)).toBe(false);
+    expect(canTakePractice(24, true, 4, 0)).toBe(false);
   });
 });
 

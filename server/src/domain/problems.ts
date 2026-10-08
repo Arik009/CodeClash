@@ -14,6 +14,19 @@ export interface RunCaseInput {
 
 export type RunCase = (input: RunCaseInput) => Promise<{ verdict: string; stdout: string }>;
 
+export async function archiveVisible(db: Db, problemId: ObjectId): Promise<boolean> {
+  const hidden = await db.collection('contests').findOne({
+    problemIds: problemId,
+    status: { $ne: 'published' },
+  });
+  return !hidden;
+}
+
+export async function assertArchiveAccess(db: Db, problemId: string) {
+  const ok = await archiveVisible(db, new ObjectId(problemId));
+  if (!ok) throw new HttpError(403, 'This problem belongs to a contest that is not published');
+}
+
 export interface PublishReport {
   ok: boolean;
   failures: string[];
