@@ -3,18 +3,24 @@ import { createServer } from 'node:http';
 import { Redis } from 'ioredis';
 import { MongoClient } from 'mongodb';
 import pino from 'pino';
+import { setAuditDb } from './db/audit.js';
 import { ensureIndexes } from './db/indexes.js';
 import { type RunCase } from './domain/problems.js';
 import { createApp } from './http/app.js';
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 const mongoUrl = process.env.MONGO_URL ?? 'mongodb://app:codeclash@127.0.0.1:27017/codeclash?replicaSet=rs0&authSource=codeclash';
+const auditUrl = process.env.AUDIT_MONGO_URL ?? 'mongodb://auditWriter:codeclash@127.0.0.1:27017/codeclash_audit?replicaSet=rs0&authSource=codeclash_audit';
 const redisUrl = process.env.REDIS_URL ?? 'redis://127.0.0.1:6379';
 
 const mongo = new MongoClient(mongoUrl);
 await mongo.connect();
 const db = mongo.db();
 await ensureIndexes(db);
+const auditClient = new MongoClient(auditUrl);
+await auditClient.connect();
+const auditDb = auditClient.db();
+setAuditDb(auditDb);
 
 const redis = new Redis(redisUrl);
 const app = createApp({

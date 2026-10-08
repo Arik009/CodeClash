@@ -2,6 +2,7 @@ import { LogOut } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api, loadSession, saveSession, SIGNED_OUT, type Session } from './api';
+import { Admin } from './pages/Admin';
 import { Auth } from './pages/Auth';
 import { Home } from './pages/Home';
 import { NotFound } from './pages/NotFound';
@@ -34,6 +35,7 @@ export default function App() {
     navigate('/');
   }
 
+  const role = session?.user.role;
   const unverified = session?.user.emailVerified === false;
   return (
     <>
@@ -43,6 +45,7 @@ export default function App() {
           <Link to="/" className="brand" aria-label="CodeClash home"><span className="brand-mark">&gt;_</span>codeclash</Link>
           <nav className="menu" aria-label="Main">
             <NavLink to="/problemset">problemset</NavLink>
+            {role === 'admin' ? <NavLink to="/admin">admin</NavLink> : null}
           </nav>
           <div className="header-right">
             <ThemePicker />
@@ -69,6 +72,7 @@ export default function App() {
           <Route path="/auth" element={session && !unverified ? <Navigate to="/" /> : <Auth onSession={setSession} />} />
           <Route path="/problemset" element={<Problemset />} />
           <Route path="/practice/:versionId" element={<Practice signedIn={!!session} />} />
+          <Route path="/admin" element={role === 'admin' ? <Admin me={session!.user.id} /> : <Navigate to="/" />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

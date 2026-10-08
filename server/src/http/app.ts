@@ -1,8 +1,9 @@
-import { SOURCE_LANGUAGES, type Role } from '@codeclash/shared';
+import { ROLES, SOURCE_LANGUAGES, type Role } from '@codeclash/shared';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { BSON, type Db, ObjectId } from 'mongodb';
 import { z } from 'zod';
+import { auditCollection } from '../db/audit.js';
 import { HttpError } from '../domain/errors.js';
 import { enqueueSubmission, latestPublished } from '../domain/judging.js';
 import { type RunCase } from '../domain/problems.js';
@@ -35,12 +36,37 @@ function auth(req: Request) {
   return readAccess(token);
 }
 
+function requireRole(req: Request, roles: Role[]) {
+  const user = auth(req);
+  if (!roles.includes(user.role)) throw new HttpError(403, 'Forbidden');
+  return user;
+}
+
 function optionalAuth(req: Request) {
   try {
     return auth(req);
   } catch {
     return null;
   }
+}
+
+async function audit(
+  db: Db,
+  actor: string,
+  action: string,
+  target: string,
+  decision: string,
+  detail: { before?: unknown; after?: unknown; reason?: string } = {},
+) {
+  await auditCollection(db).insertOne({
+    actor,
+    actorType: 'user',
+    action,
+    target,
+    decision,
+    payload: { before: detail.before ?? null, after: detail.after ?? null, reason: detail.reason ?? '' },
+    at: new Date(),
+  });
 }
 
 export function createApp(deps: AppDeps) {
@@ -255,6 +281,28 @@ export function createApp(deps: AppDeps) {
       await redis.xadd(queued.stream, '*', 'submissionId', queued.id);
     }
     res.status(queued.replay ? 200 : 202).json({ id: queued.id, replay: queued.replay });
+  }));
+
+  app.get('/api/admin/audit', asyncRoute(async (req, res) => {
+    requireRole(req, ['admin']);
+    const rows = await auditCollection(db).find({}).sort({ at: -1 }).limit(100).toArray();
+    res.json(rows.map((r) => ({ ...r, _id: String(r._id) })));
+  }));
+
+  app.get('/api/admin/users', asyncRoute(async (req, res) => {
+    requireRole(req, ['admin']);
+    const rows = await db.collection('users').find({}).project({ passwordHash: 0 }).sort({ createdAt: -1 }).limit(50).toArray();
+    res.json(rows.map((u) => ({ id: String(u._id), email: u.email, displayName: u.displayName, role: u.role })));
+  }));
+
+  app.put('/api/admin/users/:id/role', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['admin']);
+    const body = z.object({ role: z.enum(ROLES) }).parse(req.body);
+    if (req.params.id === user.sub && body.role !== 'admin') throw new HttpError(409, 'You cannot remove your own admin role');
+    const updated = await db.collection('users').updateOne({ _id: new ObjectId(req.params.id) }, { $set: { role: body.role } });
+    if (updated.matchedCount === 0) throw new HttpError(404, 'User not found');
+    await audit(db, user.sub, 'user.role', req.params.id, body.role);
+    res.json({ role: body.role });
   }));
 
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {

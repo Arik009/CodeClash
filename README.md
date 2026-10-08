@@ -48,6 +48,7 @@ A new account has to confirm its email before it can take a seat or submit. In l
 ## Where to click
 
 - **Problemset** is practice. Run samples checks the visible examples and stores nothing. Submit judges the hidden tests.
+- **Admin** is people and the audit log.
 
 In the editor, Ctrl+Enter submits. The palette icon in the header changes the theme. The choice is saved in this browser.
 
@@ -72,6 +73,7 @@ Copy-Item .env.example judge\.env
 | Variable | What it does |
 | --- | --- |
 | `MONGO_URL` | Contest database. Default matches the Docker user `app` / `codeclash` |
+| `AUDIT_MONGO_URL` | Append-only audit database. The app user cannot update or delete those rows |
 | `REDIS_URL` | Judge queue. Default `redis://127.0.0.1:6379` |
 | `JWT_SECRET` | Required in production, at least 16 characters. Local development has a built-in fallback |
 | `PORT` | API port. Default `4000` |

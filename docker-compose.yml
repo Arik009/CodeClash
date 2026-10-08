@@ -39,6 +39,14 @@ services:
           }
           for (let i = 0; i < 60 && !db.hello().isWritablePrimary; i++) sleep(500);
           const ignoreExisting = (fn) => { try { fn() } catch (e) { if (e.code !== 51002 && e.code !== 51003) throw e } };
+          const audit = db.getSiblingDB("codeclash_audit");
+          ignoreExisting(() => audit.createRole({
+            role: "auditWriter",
+            privileges: [{ resource: { db: "codeclash_audit", collection: "audit" }, actions: ["find", "insert"] }],
+            roles: []
+          }));
+          ignoreExisting(() => audit.createUser({ user: "auditWriter", pwd: "codeclash", roles: [{ role: "auditWriter", db: "codeclash_audit" }] }));
+          audit.audit.createIndex({ at: -1 });
           ignoreExisting(() => db.getSiblingDB("codeclash").createUser({ user: "app", pwd: "codeclash", roles: [{ role: "readWrite", db: "codeclash" }] }));
           print("users ready");
         '

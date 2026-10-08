@@ -1,5 +1,6 @@
 import type { Db } from 'mongodb';
 
+/** Audit indexes live with the audit database and are created by mongo-init. */
 export async function ensureIndexes(db: Db) {
   await db.collection('users').createIndex({ email: 1 }, { unique: true });
   await db.collection('submissions').createIndex({ status: 1, submittedAt: 1 });

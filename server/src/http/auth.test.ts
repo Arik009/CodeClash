@@ -87,6 +87,20 @@ describe('routes', () => {
     expect(afterReplay.status).toBe(401);
   });
 
+  it('lets an admin change a role and audits it', async () => {
+    const app = createApp({ db, redis });
+    const admin = await signIn('admin@codeclash.local', 'codeclash');
+    const found = await request(app).get('/api/admin/users').set('authorization', `Bearer ${admin}`);
+    const neha = found.body.find((row: { email: string }) => row.email === 'neha@example.com');
+    expect(neha?.passwordHash).toBeUndefined();
+    const changed = await request(app)
+      .put(`/api/admin/users/${neha.id}/role`)
+      .set('authorization', `Bearer ${admin}`)
+      .send({ role: 'setter' });
+    expect(changed.status).toBe(200);
+    expect(await db.collection('audit').countDocuments({ action: 'user.role', decision: 'setter' })).toBe(1);
+  });
+
   it('rate-limits submissions per user', async () => {
     const app = createApp({ db, redis });
     const access = await signIn('neha@example.com', 'longpassword');
