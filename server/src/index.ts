@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { Redis } from 'ioredis';
 import { MongoClient } from 'mongodb';
 import pino from 'pino';
+import { ensureIndexes } from './db/indexes.js';
 import { createApp } from './http/app.js';
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
@@ -12,11 +13,14 @@ const redisUrl = process.env.REDIS_URL ?? 'redis://127.0.0.1:6379';
 const mongo = new MongoClient(mongoUrl);
 await mongo.connect();
 const db = mongo.db();
+await ensureIndexes(db);
 
 const redis = new Redis(redisUrl);
 const app = createApp({
   db,
   redis: {
+    incr: (key) => redis.incr(key),
+    expire: (key, seconds) => redis.expire(key, seconds),
     get: (key) => redis.get(key),
     ping: () => redis.ping(),
   },

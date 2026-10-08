@@ -1,0 +1,87 @@
+import { hash } from '@node-rs/argon2';
+import type { Express } from 'express';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import { MongoClient, type Db } from 'mongodb';
+import request from 'supertest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ensureIndexes } from '../db/indexes.js';
+import type { RunCase } from '../domain/problems.js';
+import { createApp } from './app.js';
+
+let repl: MongoMemoryReplSet;
+let client: MongoClient;
+let db: Db;
+let app: Express;
+
+const redis = {
+  published: [] as string[],
+  added: [] as string[][],
+  async xadd(...args: string[]) { redis.added.push(args); return '0-1'; },
+  async publish(channel: string) { redis.published.push(channel); return 1; },
+  async incr() { return 1; },
+  async expire() { return 1; },
+  async get() { return 'ok'; },
+};
+
+/** Code containing REF doubles the last number; anything else echoes the first token. */
+const runCase: RunCase = async ({ code, stdin, expected }) => {
+  const numbers = stdin.match(/-?\d+/g) ?? [];
+  const stdout = code.includes('REF') ? `${2 * Number(numbers.at(-1) ?? 0)}\n` : `${stdin.trim().split(/\s+/)[0] ?? ''}\n`;
+  if (expected === '') return { verdict: 'AC', stdout };
+  return { verdict: stdout.trim() === expected.trim() ? 'AC' : 'WA', stdout };
+};
+
+type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
+function api(method: Method, path: string, token?: string, body?: unknown) {
+  const req = request(app)[method](path);
+  if (token) req.set('authorization', `Bearer ${token}`);
+  return body === undefined ? req : req.send(body as object);
+}
+
+let neha = { token: '', id: '' };
+
+async function signUp(email: string, displayName: string) {
+  const res = await api('post', '/api/auth/register', undefined, { email, password: 'longpassword', displayName });
+  expect(res.status).toBe(201);
+  if (res.body.verifyToken) {
+    expect((await api('post', '/api/auth/verify', undefined, { token: res.body.verifyToken })).body.emailVerified).toBe(true);
+  }
+  return { token: res.body.access as string, id: res.body.user.id as string, refresh: res.body.refresh as string };
+}
+
+beforeAll(async () => {
+  repl = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+  client = new MongoClient(repl.getUri());
+  await client.connect();
+  db = client.db('codeclash-flows');
+  await ensureIndexes(db);
+  await db.collection('users').insertOne({
+    email: 'admin@codeclash.local',
+    passwordHash: await hash('codeclash'),
+    displayName: 'Admin',
+    role: 'admin',
+    createdAt: new Date(),
+  });
+  app = createApp({ db, redis, runCase });
+  neha = await signUp('neha@example.com', 'Neha');
+}, 180000);
+
+afterAll(async () => {
+  await client.close();
+  await repl.stop();
+});
+
+describe('accounts and administration', () => {
+  it('manages sessions, profiles and duplicate sign-ups', async () => {
+    const me = await api('get', '/api/me', neha.token);
+    expect(me.body).toMatchObject({ displayName: 'Neha', email: 'neha@example.com' });
+    expect((await api('get', '/api/me')).status).toBe(401);
+    expect((await api('post', '/api/auth/register', undefined, { email: 'neha@example.com', password: 'longpassword', displayName: 'N' })).status).toBe(409);
+    expect((await api('post', '/api/auth/register', undefined, { email: 'bad', password: 'x', displayName: '' })).status).toBe(400);
+
+    const session = await signUp('temp@example.com', 'Temp');
+    expect((await api('post', '/api/auth/logout', undefined, { refresh: session.refresh })).status).toBe(204);
+    expect((await api('post', '/api/auth/refresh', undefined, { refresh: session.refresh })).status).toBe(401);
+    expect((await api('get', '/health')).body).toEqual({ ok: true, mongo: true, redis: true });
+  });
+});

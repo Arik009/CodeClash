@@ -38,6 +38,8 @@ docker compose down
 
 `docker compose down -v` also deletes the database volume.
 
+A new account has to confirm its email before it can take a seat or submit. In local development the confirmation token is shown on the sign-up screen. There is no mail server.
+
 ## Configuration
 
 You do not need a `.env` file for the local demo. The API uses the same defaults as `.env.example`.
@@ -58,6 +60,7 @@ Copy-Item .env.example server\.env
 | --- | --- |
 | `MONGO_URL` | Contest database. Default matches the Docker user `app` / `codeclash` |
 | `REDIS_URL` | Judge queue. Default `redis://127.0.0.1:6379` |
+| `JWT_SECRET` | Required in production, at least 16 characters. Local development has a built-in fallback |
 | `PORT` | API port. Default `4000` |
 | `CLIENT_ORIGIN` | Browser origin allowed by CORS. Default `http://localhost:5173` |
 

@@ -12,8 +12,8 @@
   "scripts": {
     "predev": "npm run build -w packages/shared",
     "dev": "concurrently -n server,client -c black,black \"npm run dev -w server\" \"npm run dev -w client\"",
-    "test": "npm run build -w packages/shared && npm run test -w judge",
-    "test:coverage": "npm run test:coverage -w judge",
+    "test": "npm run build -w packages/shared && npm run test -w judge && npm run test -w server",
+    "test:coverage": "npm run test:coverage -w server && npm run test:coverage -w judge",
     "lint": "eslint .",
     "build": "npm run build -w packages/shared && npm run build -w judge && npm run build -w server && npm run build -w client",
     "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w server && npm run typecheck -w judge && npm run typecheck -w client"
@@ -27,6 +27,7 @@
     "typescript-eslint": "^8.71.0"
   },
   "allowScripts": {
+    "mongodb-memory-server@10.4.3": true,
     "esbuild@0.28.2": true,
     "esbuild@0.25.12": true
   }
