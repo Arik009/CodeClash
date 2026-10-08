@@ -1,8 +1,9 @@
-import { defaultLimit, type Role, type SourceLanguage } from '@codeclash/shared';
+import { defaultLimit, practiceStreak, rateContest, type Role, type SourceLanguage } from '@codeclash/shared';
 import { createHash, randomBytes } from 'node:crypto';
 import { type Db, ObjectId } from 'mongodb';
 import { HttpError } from './errors.js';
 import type { RunCase } from './problems.js';
+import { leaderboard } from './scoring.js';
 
 export function hashVerifyToken(raw: string) {
   return createHash('sha256').update(raw).digest('hex');
@@ -102,6 +103,46 @@ export async function runSamples(
     results.push({ verdict: outcome.verdict, stdout: outcome.stdout.slice(0, 2000) });
   }
   return { results };
+}
+
+export async function applyRatings(db: Db, contestId: string) {
+  const contest = await db.collection('contests').findOne({ _id: new ObjectId(contestId) });
+  if (!contest) throw new HttpError(404, 'Contest not found');
+  if (contest.ratingsApplied) return (contest.ratingDeltas as unknown[]) ?? [];
+  const board = await leaderboard(db, contestId, { reveal: true });
+  const ids = board.map((row) => new ObjectId(row.userId));
+  const users = ids.length ? await db.collection('users').find({ _id: { $in: ids } }).toArray() : [];
+  const ratingOf = new Map(users.map((user) => [String(user._id), (user.rating as number) ?? 1200]));
+  const deltas = rateContest(board.map((row, index) => ({
+    userId: row.userId,
+    rating: ratingOf.get(row.userId) ?? 1200,
+    place: index + 1,
+  })));
+  for (const row of deltas) {
+    await db.collection('users').updateOne({ _id: new ObjectId(row.userId) }, { $set: { rating: row.after } });
+  }
+  await db.collection('contests').updateOne(
+    { _id: contest._id, ratingsApplied: { $ne: true } },
+    { $set: { ratingsApplied: true, ratingDeltas: deltas } },
+  );
+  return deltas;
+}
+
+export async function solveRecord(db: Db, userId: string) {
+  const rows = await db.collection('submissions').find({
+    userId: new ObjectId(userId),
+    verdict: 'AC',
+    status: { $in: ['judged', 'scored'] },
+  }).project({ judgedAt: 1, submittedAt: 1 }).toArray();
+  const days = [...new Set(rows.map((row) => {
+    const when = (row.judgedAt as Date | undefined) ?? (row.submittedAt as Date);
+    return when.toISOString().slice(0, 10);
+  }))].sort();
+  return { streak: practiceStreak(days), days };
+}
+
+export async function solveStreak(db: Db, userId: string) {
+  return (await solveRecord(db, userId)).streak;
 }
 
 export async function problemStats(db: Db, problemId: ObjectId, viewerId: string | null) {

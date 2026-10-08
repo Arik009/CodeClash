@@ -6,6 +6,7 @@ import { MongoClient, ObjectId } from 'mongodb';
 import { CATALOG, QUIZ_BANK } from './catalog.js';
 import { MORE } from './catalog-more.js';
 import { ensureIndexes } from './db/indexes.js';
+import { applyRatings } from './domain/product.js';
 import { awardFirstSolve, recomputeStanding } from './domain/scoring.js';
 import {
   DEMO_PASSWORD, emailFor, initialRating, MORE_QUIZ, PARTICIPANTS, practiceDays, simulateContest, STAFF, STAFF_DOMAIN,
@@ -239,6 +240,7 @@ for (const item of past) {
   const created = await createContest({ title: item.title, status: 'published', startsAt: item.startsAt, minutes: item.minutes, problems: item.problems });
   await seat(created._id, item.players, 'competing', created.startsAt.getTime());
   contestSubmissions += await playContest(created, item.players, item.problems, item.minutes);
+  await applyRatings(db, String(created._id));
 }
 
 // The live round: history so far is simulated; a few fresh submissions go to the real judge.

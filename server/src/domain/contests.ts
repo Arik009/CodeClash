@@ -28,16 +28,21 @@ export async function transitionContest(db: Db, contestId: string, to: ContestSt
     createdAt: new Date(),
     sentAt: null,
   });
+  let ratingDeltas: unknown[] = [];
+  if (to === 'published') {
+    const { applyRatings } = await import('./product.js');
+    ratingDeltas = await applyRatings(db, contestId);
+  }
   await auditCollection(db).insertOne({
     actor: actorId,
     actorType: 'user',
     action: 'contest.transition',
     target: contestId,
     decision: `${from}->${to}`,
-    payload: { before: { status: from }, after: { status: to }, reason: to === 'cancelled' ? 'cancelled by organiser' : '' },
+    payload: { before: { status: from }, after: { status: to }, reason: to === 'cancelled' ? 'cancelled by organiser' : '', ratingDeltas },
     at: new Date(),
   });
-  return { from, to };
+  return { from, to, ratings: ratingDeltas.length };
 }
 
 export async function tickContests(db: Db, now = new Date()) {

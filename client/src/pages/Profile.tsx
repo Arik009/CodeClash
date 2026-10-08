@@ -9,6 +9,9 @@ interface Me {
   displayName: string;
   email: string;
   emailVerified: boolean;
+  rating: number;
+  streak: number;
+  days: string[];
 }
 
 export function Profile({ session, onSession, onSignOut }: {
@@ -63,6 +66,9 @@ export function Profile({ session, onSession, onSignOut }: {
     }
   }
 
+  const rating = me?.rating ?? session.user.rating ?? 1200;
+  const delta = rating - 1200;
+
   return (
     <div className="page profile-page">
       <div className="page-head">
@@ -75,6 +81,27 @@ export function Profile({ session, onSession, onSignOut }: {
       {error ? <Alert>{error}</Alert> : null}
 
       <div className="profile-grid">
+        <Box title="rating">
+          <div className="rating-hero">
+            <b className="num">{rating}</b>
+            <span className={delta >= 0 ? 'ok' : 'bad'}>{delta >= 0 ? '+' : ''}{delta}</span>
+          </div>
+          <div className="rate-track" aria-hidden>
+            <span style={{ width: `${Math.max(6, Math.min(100, ((rating - 100) / 2300) * 100))}%` }} />
+            <i style={{ left: `${((1200 - 100) / 2300) * 100}%` }} />
+          </div>
+          <p className="muted small">Contest Elo. New accounts start at 1200. The mark on the bar is that start.</p>
+        </Box>
+
+        <Box title="streak">
+          <div className="rating-hero">
+            <b className="num">{me?.streak ?? 0}</b>
+            <span className="muted">day{(me?.streak ?? 0) === 1 ? '' : 's'}</span>
+          </div>
+          <Heatmap days={me?.days ?? []} />
+          <p className="muted small">Consecutive days with an accepted solution, counting back from today or yesterday. Filled cells are days you solved something.</p>
+        </Box>
+
         <Box title="name">
           <form onSubmit={saveName}>
             <label htmlFor="display-name">Shown on standings</label>
@@ -106,6 +133,24 @@ export function Profile({ session, onSession, onSignOut }: {
           </form>
         </Box>
       </div>
+    </div>
+  );
+}
+
+function Heatmap({ days }: { days: string[] }) {
+  const solved = new Set(days);
+  const today = new Date();
+  const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const start = new Date(end);
+  start.setUTCDate(end.getUTCDate() - end.getUTCDay() - 15 * 7);
+  const cells: { key: string; on: boolean }[] = [];
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    const key = cursor.toISOString().slice(0, 10);
+    cells.push({ key, on: solved.has(key) });
+  }
+  return (
+    <div className="heat" role="img" aria-label={`${solved.size} days with an accepted solution`}>
+      {cells.map((cell) => <i key={cell.key} className={cell.on ? 'on' : ''} title={cell.key} />)}
     </div>
   );
 }

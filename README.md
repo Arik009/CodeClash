@@ -56,9 +56,9 @@ The seed is deterministic (fixed random seed) and can be run again at any time. 
 
 - **26 problems** written for CodeClash, with formal statements, input specs and large tests. Each has a reference solution and a known wrong solution.
 - **65 people.** 60 participants with ratings and practice history, 3 setters and 2 organisers.
-- **Library cup**, a past contest, published so its standings and first solves are real outputs of the scoring code.
+- **Library cup**, a past contest, published and rated, so its standings, first solves and rating changes are real outputs of the scoring code.
 - **Warmup round**, live now. Its first 40 minutes are simulated; eight fresh submissions go through the real judge when you seed.
-- **About 6,000 practice submissions** over the last 16 weeks.
+- **About 6,000 practice submissions** over the last 16 weeks, which fill the profile heatmap. About a quarter of participants are on a live solve streak.
 - **60 quiz questions.**
 
 Contest editorials stay hidden until that contest has ended or been published. Problems that belong to a contest show up in the problemset only once that contest is published.
@@ -72,7 +72,7 @@ A new account has to confirm its email before it can take a seat or submit. In l
 - **Authoring** (setter or admin) drafts a problem. **New problem** opens in the pane on the right.
 - **Control** (organiser or admin) creates a contest, moves it through registration, running, freeze, end, and publish, opens quiz questions, and can cancel or rejudge.
 - **Admin** is people, workers, and the audit log.
-- Your name in the header opens **Profile**: display name and password.
+- Your name in the header opens **Profile**: rating, solve streak, display name, and password.
 
 In the editor, Ctrl+Enter submits. The palette icon in the header changes the theme. The choice is saved in this browser.
 

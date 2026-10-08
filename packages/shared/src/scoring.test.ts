@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   canTransition,
+  practiceStreak,
+  rateContest,
   streakBonus,
   compareIcpc,
   compareStanding,
@@ -129,5 +131,20 @@ describe('rules', () => {
     expect(streakBonus(1000, 0)).toBe(0);
     expect(streakBonus(1000, 1)).toBe(100);
     expect(streakBonus(1000, 9)).toBe(500);
+  });
+
+  it('counts a practice streak through yesterday when today is empty', () => {
+    expect(practiceStreak(['2026-09-29', '2026-09-30'], new Date('2026-10-01T12:00:00Z'))).toBe(2);
+    expect(practiceStreak(['2026-09-28'], new Date('2026-10-01T12:00:00Z'))).toBe(0);
+  });
+
+  it('moves rating toward the result of the contest and floors it at 100', () => {
+    const rated = rateContest([
+      { userId: 'a', rating: 1200, place: 1 },
+      { userId: 'b', rating: 1200, place: 2 },
+    ]);
+    expect(rated.find((row) => row.userId === 'a')!.delta).toBeGreaterThan(0);
+    expect(rated.find((row) => row.userId === 'b')!.delta).toBeLessThan(0);
+    expect(rateContest([{ userId: 'a', rating: 100, place: 2 }, { userId: 'b', rating: 2000, place: 1 }])[0]!.after).toBeGreaterThanOrEqual(100);
   });
 });

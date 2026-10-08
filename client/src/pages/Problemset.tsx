@@ -19,11 +19,14 @@ interface ArchiveItem {
 
 interface ArchivePage { items: ArchiveItem[]; total: number; page: number; pageSize: number; tags: string[] }
 
+interface Me { rating: number; streak: number; emailVerified: boolean }
+
 const PAGE_SIZE = 25;
 const TOP_TAGS = 12;
 
 export function Problemset() {
   const [data, setData] = useState<ArchivePage | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState('');
   const [allTags, setAllTags] = useState(false);
   const [params, setParams] = useSearchParams();
@@ -45,6 +48,10 @@ export function Problemset() {
     }, query ? 180 : 0);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [query, tag, difficulty, status, page]);
+
+  useEffect(() => {
+    api<Me>('/api/me').then(setMe).catch(() => setMe(null));
+  }, []);
 
   function update(next: { q?: string; tag?: string; difficulty?: string; status?: string; page?: number }) {
     const merged = { q: query, tag, difficulty, status, page: 1, ...next };
@@ -145,6 +152,15 @@ export function Problemset() {
           ) : null}
         </div>
         <aside className="side">
+          <Box title="your record">
+            {me ? (
+              <div className="stack tight">
+                <div className="row between"><span className="muted small">rating</span><b className="num">{me.rating}</b></div>
+                <div className="row between"><span className="muted small">solve streak</span><b className="num">{me.streak} day{me.streak === 1 ? '' : 's'}</b></div>
+                <Link className="small" to="/profile">profile</Link>
+              </div>
+            ) : <p className="muted small" style={{ margin: 0 }}>Sign in to see your rating and streak. Anyone can browse.</p>}
+          </Box>
           <Box title="how scoring works">
             <p className="muted small" style={{ margin: 0 }}>Run samples checks the visible examples and records nothing. Submit judges the hidden tests.</p>
           </Box>

@@ -287,7 +287,7 @@ describe('contest lifecycle', () => {
     expect((await api('post', '/api/practice/submissions', ravi.token, { problemVersionId: String(new ObjectId()), language: 'python', code: 'x' })).status).toBe(404);
   });
 
-  it('replays the same idempotency key, runs samples without storing, and rejudges', async () => {
+  it('replays the same idempotency key, runs samples without storing, rejudges, and rates', async () => {
     const first = await request(app)
       .post('/api/practice/submissions')
       .set('authorization', `Bearer ${ravi.token}`)
@@ -312,6 +312,10 @@ describe('contest lifecycle', () => {
     expect(judged.body.count).toBeGreaterThan(0);
     const row = await db.collection('audit').findOne({ action: 'contest.rejudge' });
     expect(row?.payload).toMatchObject({ reason: 'limits were wrong' });
+
+    const me = await api('get', '/api/me', neha.token);
+    expect(me.body.rating).toBeGreaterThanOrEqual(100);
+    expect(me.body.emailVerified).toBe(true);
   });
 
   it('refuses a seat until the email is verified, then releases every seat on cancel', async () => {

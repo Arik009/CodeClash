@@ -160,6 +160,44 @@ export function streakBonus(base: number, priorCorrect: number): number {
   return Math.round(base * 0.1 * steps);
 }
 
+/** Consecutive UTC days with a solve, ending today, or yesterday when today is still empty. */
+export function practiceStreak(dayKeys: string[], today = new Date()): number {
+  const days = new Set(dayKeys);
+  const cursor = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const key = (date: Date) => date.toISOString().slice(0, 10);
+  if (!days.has(key(cursor))) cursor.setUTCDate(cursor.getUTCDate() - 1);
+  let streak = 0;
+  while (days.has(key(cursor))) {
+    streak += 1;
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  return streak;
+}
+
+export interface RatedPlayer {
+  userId: string;
+  rating: number;
+  place: number;
+}
+
+/** Elo over the final ranking. Each player plays every other player once; K is spread across those games. */
+export function rateContest(players: RatedPlayer[], k = 24): { userId: string; before: number; after: number; delta: number }[] {
+  return players.map((player) => {
+    let actual = 0;
+    let expected = 0;
+    let games = 0;
+    for (const other of players) {
+      if (other.userId === player.userId) continue;
+      games += 1;
+      actual += player.place < other.place ? 1 : player.place === other.place ? 0.5 : 0;
+      expected += 1 / (1 + 10 ** ((other.rating - player.rating) / 400));
+    }
+    const delta = games === 0 ? 0 : Math.round((k * (actual - expected)) / games);
+    const after = Math.max(100, player.rating + delta);
+    return { userId: player.userId, before: player.rating, after, delta: after - player.rating };
+  });
+}
+
 export function firstSolveBonusPoints(maxPoints: number, mode: 'icpc' | 'quiz' | 'ioi'): number {
   if (mode === 'icpc') return 0;
   return Math.round(maxPoints * 0.1);

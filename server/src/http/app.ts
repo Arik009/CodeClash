@@ -14,7 +14,7 @@ import { assertArchiveAccess, runPublishCheck, testsFromZip, type RunCase } from
 import { reserveSeat, withdrawSeat } from '../domain/registration.js';
 import { leaderboard } from '../domain/scoring.js';
 import { checkPassword, hashPassword, issueRefresh, readAccess, revokeRefresh, rotateRefresh, signAccess } from './auth.js';
-import { assertVerified, newVerifyToken, publicUser, rejudgeSubmissions, runSamples, verifyEmail } from '../domain/product.js';
+import { assertVerified, newVerifyToken, publicUser, rejudgeSubmissions, runSamples, solveRecord, verifyEmail } from '../domain/product.js';
 
 export interface AppDeps {
   db: Db;
@@ -179,7 +179,8 @@ export function createApp(deps: AppDeps) {
     const doc = await db.collection('users').findOne({ _id: new ObjectId(user.sub) });
     if (!doc) throw new HttpError(401, 'User no longer exists');
     const profile = publicUser({ ...doc, _id: doc._id, role: doc.role as Role, displayName: doc.displayName as string });
-    res.json({ ...profile, email: doc.email });
+    const record = await solveRecord(db, user.sub);
+    res.json({ ...profile, email: doc.email, streak: record.streak, days: record.days });
   }));
 
   app.patch('/api/me', asyncRoute(async (req, res) => {

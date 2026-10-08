@@ -1,7 +1,7 @@
-import { seededRng } from '@codeclash/shared';
+import { practiceStreak, seededRng } from '@codeclash/shared';
 import { describe, expect, it } from 'vitest';
 import {
-  emailFor, initialRating, MORE_QUIZ, PARTICIPANTS, simulateContest, solveChance, STAFF, STAFF_DOMAIN, STUDENT_DOMAIN,
+  emailFor, initialRating, MORE_QUIZ, PARTICIPANTS, practiceDays, simulateContest, solveChance, STAFF, STAFF_DOMAIN, STUDENT_DOMAIN,
 } from './seed-data.js';
 
 describe('seed people', () => {
@@ -21,6 +21,22 @@ describe('seed people', () => {
     const mean = ratings.reduce((a, b) => a + b, 0) / ratings.length;
     expect(mean).toBeGreaterThan(1350);
     expect(mean).toBeLessThan(1450);
+  });
+});
+
+describe('practice days', () => {
+  it('puts about a quarter of users on a live streak', () => {
+    const rng = seededRng(2);
+    const today = new Date();
+    const key = (day: number) => new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()) - day * 86_400_000).toISOString().slice(0, 10);
+    let streaking = 0;
+    for (let i = 0; i < 400; i += 1) {
+      const days = practiceDays(rng);
+      expect(days.every((d) => d >= 0 && d < 112)).toBe(true);
+      if (practiceStreak(days.map(key), today) > 0) streaking += 1;
+    }
+    expect(streaking / 400).toBeGreaterThan(0.18);
+    expect(streaking / 400).toBeLessThan(0.38);
   });
 });
 
