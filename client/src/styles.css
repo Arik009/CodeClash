@@ -457,6 +457,8 @@ form.author-work { margin: 0; }
 .solution-head input, .solution-head select { width: auto; min-height: 30px; padding-top: 0.2rem; padding-bottom: 0.2rem; font-size: 0.82rem; }
 .file { position: relative; overflow: hidden; }
 .file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.mono-area { font-family: var(--mono); font-size: 0.85rem; }
+.spec-help pre { font-size: 0.78rem; overflow-x: auto; }
 
 /* ---------- control & admin ---------- */
 .pick-list { max-height: 18rem; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); }

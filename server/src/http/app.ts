@@ -1,4 +1,6 @@
-import { defaultLimits, ROLES, SOURCE_LANGUAGES, type ContestStatus, type Role } from '@codeclash/shared';
+import {
+  defaultLimits, draftSpec, parseSpec, ROLES, SOURCE_LANGUAGES, SpecError, validateInput, type ContestStatus, type Role,
+} from '@codeclash/shared';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { BSON, type Db, ObjectId } from 'mongodb';
@@ -383,6 +385,7 @@ export function createApp(deps: AppDeps) {
       tests: latest?.tests ?? [],
       reference: latest?.reference ?? null,
       wrongSolutions: latest?.wrongSolutions ?? [],
+      inputSpec: latest?.inputSpec ?? '',
       status: 'draft',
       report: [],
     });
@@ -407,6 +410,7 @@ export function createApp(deps: AppDeps) {
       tests: version.tests ?? [],
       reference: version.reference ?? null,
       wrongSolutions: version.wrongSolutions ?? [],
+      inputSpec: version.inputSpec ?? '',
       status: version.status,
       report: version.report ?? [],
     });
@@ -421,13 +425,48 @@ export function createApp(deps: AppDeps) {
       editorial: z.string().optional(),
       tags: z.array(z.string()).optional(),
       difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
+      inputSpec: z.string().max(4000).optional(),
     }).parse(req.body);
+    if (body.inputSpec?.trim()) {
+      try {
+        parseSpec(body.inputSpec);
+      } catch (error) {
+        throw new HttpError(400, error instanceof SpecError ? `Input spec: ${error.message}` : 'Input spec does not parse');
+      }
+    }
     const updated = await db.collection('problem_versions').updateOne(
       { _id: new ObjectId(req.params.id), status: { $in: ['draft', 'blocked'] } },
       { $set: { ...body, status: 'draft' } },
     );
     if (updated.matchedCount === 0) throw new HttpError(409, 'Only draft or blocked versions can be edited');
     res.json({ ok: true });
+  }));
+
+  /** Checks a spec against every stored test, and drafts one from the statement for comparison. */
+  app.post('/api/problem-versions/:id/spec-check', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const body = z.object({ inputSpec: z.string().max(4000) }).parse(req.body);
+    const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(req.params.id) });
+    if (!version) throw new HttpError(404, 'Version not found');
+    const tests = (version.tests as { input: string }[]) ?? [];
+    const drafted = draftSpec(String(version.statement ?? ''), tests.map((t) => t.input));
+    if (!body.inputSpec.trim()) {
+      res.json({ ok: false, parseError: 'The spec is empty', failures: [], checked: 0, drafted });
+      return;
+    }
+    let spec;
+    try {
+      spec = parseSpec(body.inputSpec);
+    } catch (error) {
+      res.json({ ok: false, parseError: error instanceof SpecError ? error.message : 'does not parse', failures: [], checked: 0, drafted });
+      return;
+    }
+    const failures = tests
+      .map((test, index) => ({ test: index + 1, result: validateInput(spec, test.input) }))
+      .filter((row) => !row.result.ok)
+      .slice(0, 20)
+      .map((row) => ({ test: row.test, error: row.result.ok ? '' : row.result.error }));
+    res.json({ ok: failures.length === 0, parseError: null, failures, checked: tests.length, drafted });
   }));
 
   app.put('/api/problem-versions/:id/tests', asyncRoute(async (req, res) => {

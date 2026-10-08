@@ -1,0 +1,57 @@
+import { seededRng } from '@codeclash/shared';
+import { describe, expect, it } from 'vitest';
+import {
+  emailFor, initialRating, PARTICIPANTS, simulateContest, solveChance, STAFF, STAFF_DOMAIN, STUDENT_DOMAIN,
+} from './seed-data.js';
+
+describe('seed people', () => {
+  it('gives every person a unique, plain email', () => {
+    const emails = [...PARTICIPANTS.map((n) => emailFor(n, STUDENT_DOMAIN)), ...STAFF.map((s) => emailFor(s.name, STAFF_DOMAIN))];
+    expect(new Set(emails).size).toBe(emails.length);
+    for (const email of emails) expect(email).toMatch(/^[a-z]+(\.[a-z]+)+@[a-z.]+$/);
+    expect(emailFor("Liam O'Connor", 'x.dev')).toBe('liam.oconnor@x.dev');
+    expect(emailFor('Tomás Silva', 'x.dev')).toBe('tomas.silva@x.dev');
+  });
+
+  it('draws ratings around 1400 inside 800..2600', () => {
+    const rng = seededRng(1);
+    const ratings = Array.from({ length: 2000 }, () => initialRating(rng));
+    expect(Math.min(...ratings)).toBeGreaterThanOrEqual(800);
+    expect(Math.max(...ratings)).toBeLessThanOrEqual(2600);
+    const mean = ratings.reduce((a, b) => a + b, 0) / ratings.length;
+    expect(mean).toBeGreaterThan(1350);
+    expect(mean).toBeLessThan(1450);
+  });
+});
+
+describe('contest simulation', () => {
+  it('lets stronger players solve harder problems more often', () => {
+    expect(solveChance(1800, 1200)).toBeGreaterThan(0.9);
+    expect(solveChance(1000, 1800)).toBeLessThan(0.05);
+    expect(solveChance(1400, 1400)).toBeCloseTo(0.5);
+  });
+
+  it('keeps attempts inside the contest and ends each solved problem with one AC', () => {
+    const rng = seededRng(3);
+    const players = Array.from({ length: 40 }, (_, i) => ({ id: `u${i}`, skill: 900 + i * 30 }));
+    const problems = [
+      { id: 'A', rating: 800, wrongVerdicts: ['WA'] },
+      { id: 'B', rating: 1300, wrongVerdicts: ['TLE', 'WA'] },
+      { id: 'C', rating: 1900, wrongVerdicts: [] },
+    ];
+    const attempts = simulateContest(rng, players, problems, 120);
+    expect(attempts.length).toBeGreaterThan(40);
+    expect(attempts.every((a) => a.minute >= 0 && a.minute < 120)).toBe(true);
+    for (const player of players) {
+      for (const problem of problems) {
+        const mine = attempts.filter((a) => a.userId === player.id && a.problemId === problem.id);
+        expect(mine.filter((a) => a.verdict === 'AC').length).toBeLessThanOrEqual(1);
+        const ac = mine.findIndex((a) => a.verdict === 'AC');
+        if (ac >= 0) expect(ac).toBe(mine.length - 1);
+      }
+    }
+    const solvedA = attempts.filter((a) => a.problemId === 'A' && a.verdict === 'AC').length;
+    const solvedC = attempts.filter((a) => a.problemId === 'C' && a.verdict === 'AC').length;
+    expect(solvedA).toBeGreaterThan(solvedC);
+  });
+});

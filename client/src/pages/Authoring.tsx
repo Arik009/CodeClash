@@ -1,4 +1,4 @@
-import { FilePlus2, FileUp, Plus, Save, Search, Trash2, X } from 'lucide-react';
+import { FilePlus2, FileUp, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, isAbort } from '../api';
@@ -21,10 +21,12 @@ interface Version {
   tests: Test[];
   reference: { language: Language; code: string } | null;
   wrongSolutions: Solution[];
+  inputSpec: string;
   status: string;
   report: string[];
 }
-type Section = 'statement' | 'tests' | 'solutions';
+interface SpecCheck { ok: boolean; parseError: string | null; failures: { test: number; error: string }[]; checked: number; drafted: string | null }
+type Section = 'statement' | 'tests' | 'spec' | 'solutions';
 
 const EDITABLE = ['draft', 'blocked'];
 
@@ -41,6 +43,7 @@ export function Authoring() {
   const [version, setVersion] = useState<Version | null>(null);
   const [dirty, setDirty] = useState(false);
   const [section, setSection] = useState<Section>('statement');
+  const [specCheck, setSpecCheck] = useState<SpecCheck | null>(null);
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newStatement, setNewStatement] = useState('');
@@ -54,8 +57,9 @@ export function Authoring() {
     if (!id) { setVersion(null); setTagText(''); return; }
     const next = await api<Version>(`/api/problem-versions/${id}`, { signal });
     if (signal?.aborted) return;
-    setVersion({ ...next, tags: tagList(next.tags) });
+    setVersion({ ...next, tags: tagList(next.tags), inputSpec: next.inputSpec ?? '' });
     setTagText(tagList(next.tags).join(', '));
+    setSpecCheck(null);
     setDirty(false);
   }, []);
 
@@ -124,7 +128,7 @@ export function Authoring() {
     return guarded('save', async () => {
       await api(`/api/problem-versions/${version.versionId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ title: version.title, statement: version.statement, samples: version.samples, editorial: version.editorial, tags: version.tags, difficulty: version.difficulty }),
+        body: JSON.stringify({ title: version.title, statement: version.statement, samples: version.samples, editorial: version.editorial, tags: version.tags, difficulty: version.difficulty, inputSpec: version.inputSpec }),
       });
       await api(`/api/problem-versions/${version.versionId}/tests`, {
         method: 'PUT',
@@ -147,6 +151,16 @@ export function Authoring() {
       });
       await loadVersion(version.versionId);
       toast(`Loaded ${result.count} tests from the zip`, 'ok');
+    });
+  }
+
+  async function checkSpec() {
+    if (!version) return;
+    await guarded('spec', async () => {
+      setSpecCheck(await api<SpecCheck>(`/api/problem-versions/${version.versionId}/spec-check`, {
+        method: 'POST',
+        body: JSON.stringify({ inputSpec: version.inputSpec }),
+      }));
     });
   }
 
@@ -254,10 +268,11 @@ export function Authoring() {
 
 
               <nav className="tabs" role="tablist" aria-label="Sections">
-                {([['statement', 'statement'], ['tests', 'tests'], ['solutions', 'solutions']] as const).map(([key, name]) => (
+                {([['statement', 'statement'], ['tests', 'tests'], ['spec', 'spec'], ['solutions', 'solutions']] as const).map(([key, name]) => (
                   <button key={key} type="button" role="tab" aria-selected={section === key} className={`tab ${section === key ? 'on' : ''}`} onClick={() => setSection(key)}>
                     {name}
                     {key === 'tests' ? <span className="count">{version.tests.length}</span> : null}
+                    {key === 'spec' && !version.inputSpec.trim() ? <span className="count">none</span> : null}
                     {key === 'solutions' ? <span className="count">{(version.reference ? 1 : 0) + version.wrongSolutions.length}</span> : null}
                   </button>
                 ))}
@@ -322,6 +337,56 @@ export function Authoring() {
                       </div>
                     )}
                   </>
+                ) : null}
+
+                {section === 'spec' ? (
+                  <div className="two">
+                    <div>
+                      <label htmlFor="spec" style={{ marginTop: 0 }}>Input spec · one line per input line</label>
+                      <textarea
+                        id="spec"
+                        className="mono-area"
+                        spellCheck={false}
+                        value={version.inputSpec}
+                        onChange={(e) => { patch({ inputSpec: e.target.value }); setSpecCheck(null); }}
+                        placeholder={'n int 1..2*10^5\na int[n] -10^9..10^9'}
+                        style={{ minHeight: '12rem' }}
+                      />
+                      <div className="row" style={{ marginTop: 'var(--space-2)' }}>
+                        <button className="btn sm" type="button" onClick={checkSpec} disabled={working !== ''}><ShieldCheck size={14} /> {working === 'spec' ? 'checking…' : 'check against tests'}</button>
+                        {specCheck?.drafted && specCheck.drafted !== version.inputSpec.trim() ? (
+                          <button className="btn ghost sm" type="button" onClick={() => { patch({ inputSpec: specCheck.drafted! }); setSpecCheck(null); }}>use the spec drafted from the statement</button>
+                        ) : null}
+                      </div>
+                      {specCheck ? (
+                        specCheck.parseError ? <Alert tone="bad">{specCheck.parseError}</Alert>
+                          : specCheck.ok ? <Alert tone="ok">All {specCheck.checked} tests are valid under this spec.</Alert>
+                            : (
+                              <Alert tone="bad">
+                                <strong>{specCheck.failures.length} test(s) break this spec</strong>
+                                <ul>{specCheck.failures.map((f) => <li key={f.test}>test #{f.test}: {f.error}</li>)}</ul>
+                              </Alert>
+                            )
+                      ) : null}
+                    </div>
+                    <div className="spec-help small">
+                      <p className="label" style={{ marginTop: 0 }}>Syntax</p>
+                      <pre>{[
+                        'n int 1..2*10^5, k int 0..n   one line, two integers',
+                        'a int[n] -10^9..10^9          n integers on one line',
+                        's str[1..n] a-z               a string and its alphabet',
+                        'lines n-1: u int 1..n, v int 1..n',
+                        't int 1..10^4',
+                        'repeat t:                     the indented block, t times',
+                        '  n int 1..10^5',
+                        'sum n <= 2*10^5               over all repeats',
+                      ].join('\n')}</pre>
+                      <p className="muted">
+                        Hardening validates every generated or model-proposed input against this spec before it runs.
+                        Without one, it drafts a spec from the statement and keeps it only if every current test fits.
+                      </p>
+                    </div>
+                  </div>
                 ) : null}
 
                 {section === 'solutions' ? (

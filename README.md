@@ -33,7 +33,14 @@ Then open http://localhost:5173.
 | API | http://localhost:4000 |
 | Health | http://localhost:4000/health |
 
-The seed creates one account, `admin@codeclash.local`, with the password `codeclash`.
+Every seeded account uses the password `codeclash`:
+
+| Role | Email |
+| --- | --- |
+| admin | `admin@codeclash.local` |
+| setter | `meghna.raghavan@codeclash.dev`, `arnav.bhattacharya@codeclash.dev`, `daniel.novak@codeclash.dev` |
+| organiser | `vikram.sethi@codeclash.dev`, `laura.bennett@codeclash.dev` |
+| participant | 60 students, for example `diya.banerjee@students.codeclash.dev` or `lucas.moreau@students.codeclash.dev` |
 
 `npm run dev` starts three processes in one terminal: the API, the judge, and the client. Leave that terminal open. Stop them with Ctrl+C. The databases keep running until you stop Docker:
 
@@ -42,6 +49,18 @@ docker compose down
 ```
 
 `docker compose down -v` also deletes the database volume. Run `npm run seed` again after that.
+
+## What the seed creates
+
+The seed is deterministic (fixed random seed) and can be run again at any time. It replaces only what it created earlier, which is marked `seeded: true`.
+
+- **26 problems** written for CodeClash, with formal statements, input specs and large tests. Each has a reference solution and a known wrong solution.
+- **65 people.** 60 participants with ratings and practice history, 3 setters and 2 organisers.
+- **Library cup**, a past contest, published so its standings and first solves are real outputs of the scoring code.
+- **Warmup round**, live now. Its first 40 minutes are simulated; eight fresh submissions go through the real judge when you seed.
+- **About 6,000 practice submissions** over the last 16 weeks.
+
+Contest editorials stay hidden until that contest has ended or been published.
 
 A new account has to confirm its email before it can take a seat or submit. In local development the confirmation token is shown on the sign-up screen. There is no mail server.
 
