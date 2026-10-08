@@ -37,6 +37,7 @@ export default function App() {
 
   const role = session?.user.role;
   const unverified = session?.user.emailVerified === false;
+  const signIn = <Navigate to="/auth" state={{ from: location.pathname }} />;
   return (
     <>
       <a className="skip" href="#main">Skip to content</a>
@@ -72,7 +73,7 @@ export default function App() {
           <Route path="/auth" element={session && !unverified ? <Navigate to="/" /> : <Auth onSession={setSession} />} />
           <Route path="/problemset" element={<Problemset />} />
           <Route path="/practice/:versionId" element={<Practice signedIn={!!session} />} />
-          <Route path="/admin" element={role === 'admin' ? <Admin me={session!.user.id} /> : <Navigate to="/" />} />
+          <Route path="/admin" element={role === 'admin' ? <Admin me={session!.user.id} /> : session ? <Navigate to="/" /> : signIn} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

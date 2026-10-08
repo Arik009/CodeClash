@@ -43,7 +43,7 @@ afterAll(async () => {
 });
 
 describe('authz', () => {
-  it('signs up, confirms the email and rejects a wrong password', async () => {
+  it('returns 403 when a participant calls an admin route, and writes an audit row only for allowed admin actions', async () => {
     const app = createApp({ db, redis });
     const registered = await request(app).post('/api/auth/register').send({
       email: 'neha@example.com',
@@ -54,11 +54,22 @@ describe('authz', () => {
     if (registered.body.verifyToken) {
       expect((await request(app).post('/api/auth/verify').send({ token: registered.body.verifyToken })).status).toBe(200);
     }
+    const denied = await request(app)
+      .get('/api/admin/audit')
+      .set('authorization', `Bearer ${registered.body.access}`);
+    expect(denied.status).toBe(403);
+
     const admin = await request(app).post('/api/auth/login').send({
       email: 'admin@codeclash.local',
       password: 'codeclash',
     });
-    expect(admin.status).toBe(200);
+    const changed = await request(app)
+      .put(`/api/admin/users/${registered.body.user.id}/role`)
+      .set('authorization', `Bearer ${admin.body.access}`)
+      .send({ role: 'participant' });
+    expect(changed.status).toBe(200);
+    const audit = await db.collection('audit').find({ action: 'user.role' }).toArray();
+    expect(audit.length).toBeGreaterThan(0);
 
     const wrong = await request(app).post('/api/auth/login').send({
       email: 'admin@codeclash.local',
