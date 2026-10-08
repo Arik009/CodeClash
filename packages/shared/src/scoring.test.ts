@@ -8,6 +8,7 @@ import {
   compareIcpc,
   compareStanding,
   firstSolveBonusPoints,
+  gateTool,
   icpcRow,
   practiceSlotCap,
   problemCells,
@@ -161,5 +162,13 @@ describe('rules', () => {
     expect(rated.find((row) => row.userId === 'a')!.delta).toBeGreaterThan(0);
     expect(rated.find((row) => row.userId === 'b')!.delta).toBeLessThan(0);
     expect(rateContest([{ userId: 'a', rating: 100, place: 2 }, { userId: 'b', rating: 2000, place: 1 }])[0]!.after).toBeGreaterThanOrEqual(100);
+  });
+
+  it('denies unknown and prohibited agent tools', () => {
+    expect(gateTool('publish')).toBe('deny');
+    expect(gateTool('change_score')).toBe('deny');
+    expect(gateTool('propose_test')).toBe('hold');
+    expect(gateTool('read_problem')).toBe('allow');
+    expect(gateTool('drop_database')).toBe('deny');
   });
 });

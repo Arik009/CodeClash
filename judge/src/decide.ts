@@ -97,3 +97,7 @@ export function classifyRun(input: {
 function normalize(text: string) {
   return text.replace(/\r\n/g, '\n').trimEnd();
 }
+
+export function sameOutput(a: string, b: string) {
+  return normalize(a) === normalize(b);
+}

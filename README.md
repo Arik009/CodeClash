@@ -42,7 +42,7 @@ Every seeded account uses the password `codeclash`:
 | organiser | `vikram.sethi@codeclash.dev`, `laura.bennett@codeclash.dev` |
 | participant | 60 students, for example `diya.banerjee@students.codeclash.dev` or `lucas.moreau@students.codeclash.dev` |
 
-`npm run dev` starts three processes in one terminal: the API, the judge, and the client. Leave that terminal open. Stop them with Ctrl+C. The databases keep running until you stop Docker:
+`npm run dev` starts four processes in one terminal: the API, the judge, the test-hardening agent, and the client. Leave that terminal open. Stop them with Ctrl+C. The databases keep running until you stop Docker:
 
 ```bash
 docker compose down
@@ -85,20 +85,22 @@ In the editor, Ctrl+Enter submits. The palette icon in the header changes the th
 
 ## Configuration
 
-You do not need a `.env` file for the local demo. The API and the judge use the same defaults as `.env.example`.
+You do not need a `.env` file for the local demo. The API, judge, and agent use the same defaults as `.env.example`.
 
-Each of those processes reads `.env` from its own folder (`server/`, `judge/`), not from the repository root. To change a value, copy the example into the folders you want to override:
+Each of those processes reads `.env` from its own folder (`server/`, `judge/`, `agent/`), not from the repository root. To change a value, copy the example into the folders you want to override:
 
 ```bash
 # macOS or Linux
 cp .env.example server/.env
 cp .env.example judge/.env
+cp .env.example agent/.env
 ```
 
 ```powershell
 # Windows PowerShell
 Copy-Item .env.example server\.env
 Copy-Item .env.example judge\.env
+Copy-Item .env.example agent\.env
 ```
 
 | Variable | What it does |
@@ -111,6 +113,11 @@ Copy-Item .env.example judge\.env
 | `CLIENT_ORIGIN` | Browser origin allowed by CORS. Default `http://localhost:5173` |
 | `JUDGE_SLOTS` | How many submissions this judge runs at once. Default `4` |
 | `JUDGE_BATCH` | `1` compiles once and runs every test in one container. Default `0` (one container per test) |
+| `AGENT_PROVIDER` | Empty (no AI, default), `anthropic`, `gemini`, or `openai` |
+| `AGENT_MODEL` | Model name for that provider |
+| `AGENT_BASE_URL` | Any OpenAI-compatible server, such as a local Ollama at `http://localhost:11434/v1` |
+| `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY` | Only for the provider you pick. Keep them in `.env`, never in git |
+| `AGENT_RUN_TOKEN_CAP`, `AGENT_MONTHLY_TOKEN_CAP` | Tokens one hardening run may spend, and the monthly ceiling. Defaults `20000` and `200000` |
 
 Do not commit `.env`. It is listed in `.gitignore`.
 

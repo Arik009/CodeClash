@@ -246,3 +246,24 @@ export function practiceSlotCap(totalSlots: number, contestRunning: boolean): nu
   if (!contestRunning) return totalSlots;
   return Math.floor(totalSlots * 0.2);
 }
+
+export const AGENT_TOOLS = {
+  read_problem: 'allow',
+  run_in_sandbox: 'allow',
+  propose_test: 'hold',
+  propose_wrong_solution: 'hold',
+  publish: 'deny',
+  edit_tests: 'deny',
+  delete_tests: 'deny',
+  change_limits: 'deny',
+  change_score: 'deny',
+  disqualify: 'deny',
+} as const;
+
+export type AgentTool = keyof typeof AGENT_TOOLS;
+export type GateDecision = 'allow' | 'hold' | 'deny';
+
+export function gateTool(name: string): GateDecision {
+  if (name in AGENT_TOOLS) return AGENT_TOOLS[name as AgentTool];
+  return 'deny';
+}

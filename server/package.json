@@ -15,6 +15,7 @@
     "rescore": "tsx src/rescore.ts"
   },
   "dependencies": {
+    "@codeclash/agent": "*",
     "@codeclash/judge": "*",
     "@codeclash/shared": "*",
     "adm-zip": "^0.5.16",

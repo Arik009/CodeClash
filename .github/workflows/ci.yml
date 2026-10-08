@@ -21,7 +21,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Build workspace packages
-        run: npm run build -w packages/shared && npm run build -w judge
+        run: npm run build -w packages/shared && npm run build -w judge && npm run build -w agent
       - run: npm run lint
       - run: npm run typecheck
       - name: Pull sandbox images
