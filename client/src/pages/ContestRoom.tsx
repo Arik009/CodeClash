@@ -65,6 +65,18 @@ export function ContestRoom({ me }: { me: string | null }) {
     }
   }
 
+  async function withdraw() {
+    if (!seat || !window.confirm('Give up your seat? The next person on the waitlist takes it.')) return;
+    setError('');
+    try {
+      await api(`/api/seats/${seat.seatId}`, { method: 'DELETE' });
+      toast('Seat released', 'info');
+      await Promise.all([loadSeat(), loadContest()]);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+
   if (!contest) {
     return <div className="page">{error ? <Alert>{error}</Alert> : <div className="skeleton" style={{ height: '8rem' }} />}</div>;
   }
@@ -102,6 +114,9 @@ export function ContestRoom({ me }: { me: string | null }) {
           ) : seat && hasSeat ? (
             <>
               <span className="pill ok"><Check size={12} /> {seat.status === 'competing' ? 'competing' : 'registered'}</span>
+              {seat.status === 'reserved' || seat.status === 'modified'
+                ? <button className="btn ghost sm" type="button" onClick={withdraw}>withdraw</button>
+                : null}
             </>
           ) : seat?.status === 'waitlisted' ? (
             <span className="pill warn">waitlist #{seat.position}</span>

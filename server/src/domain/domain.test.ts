@@ -5,7 +5,7 @@ import { ensureIndexes } from '../db/indexes.js';
 import { tickContests, transitionContest } from './contests.js';
 import { HttpError } from './errors.js';
 import { claimSubmission, commitVerdict, enqueueSubmission, reclaimSubmission } from './judging.js';
-import { reserveSeat, seatInvariants } from './registration.js';
+import { reserveSeat, seatInvariants, withdrawSeat } from './registration.js';
 
 let repl: MongoMemoryReplSet;
 let client: MongoClient;
@@ -84,6 +84,25 @@ describe('seats', () => {
     expect(inv.countMismatch).toBe(false);
     expect(inv.duplicateUsers).toBe(0);
     expect(inv.reserved).toBe(200);
+  });
+
+  it('promotes the waitlist head, and decrements reserved when the waitlist is empty', async () => {
+    const contestId = await openContest(1);
+    const a = await user();
+    const b = await user();
+    const first = await reserveSeat(db, contestId, a);
+    const second = await reserveSeat(db, contestId, b);
+    expect(first.outcome).toBe('reserved');
+    expect(second.outcome).toBe('waitlisted');
+    const promoted = await withdrawSeat(db, first.seatId, a);
+    expect(promoted.promotedUserId).toBe(b);
+    let inv = await seatInvariants(db, contestId);
+    expect(inv.reserved).toBe(1);
+    const bSeat = await db.collection('seats').findOne({ contestId: new ObjectId(contestId), userId: new ObjectId(b), active: true });
+    await withdrawSeat(db, String(bSeat!._id), b);
+    inv = await seatInvariants(db, contestId);
+    expect(inv.reserved).toBe(0);
+    expect(inv.reservedCount).toBe(0);
   });
 });
 

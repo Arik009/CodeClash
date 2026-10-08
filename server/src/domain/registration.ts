@@ -83,6 +83,49 @@ export async function reserveSeat(db: Db, contestId: string, userId: string): Pr
   }
 }
 
+export async function withdrawSeat(db: Db, seatId: string, userId: string) {
+  const session = db.client.startSession();
+  try {
+    let promoted: string | null = null;
+    await session.withTransaction(async () => {
+      const seat = await db.collection('seats').findOne(
+        { _id: new ObjectId(seatId), userId: new ObjectId(userId), status: { $in: ['reserved', 'modified'] } },
+        { session },
+      );
+      if (!seat) throw new HttpError(404, 'No reserved seat to withdraw');
+      await db.collection('seats').updateOne(
+        { _id: seat._id },
+        { $set: { status: 'withdrawn', active: false } },
+        { session },
+      );
+      const contest = await db.collection('contests').findOne({ _id: seat.contestId }, { session });
+      const promotedStatus = contest?.status === 'running' ? 'competing' : 'reserved';
+      const head = await db.collection('seats').findOneAndUpdate(
+        { contestId: seat.contestId, status: 'waitlisted', active: true },
+        { $set: { status: promotedStatus, waitlistPos: null } },
+        { sort: { waitlistPos: 1 }, session, returnDocument: 'after' },
+      );
+      if (head) {
+        promoted = String(head.userId);
+      } else {
+        await db.collection('contests').updateOne({ _id: seat.contestId }, { $inc: { reserved: -1 } }, { session });
+      }
+      await db.collection('outbox').insertOne(
+        {
+          type: 'SeatChanged',
+          payload: { contestId: String(seat.contestId), promotedUserId: promoted },
+          createdAt: new Date(),
+          sentAt: null,
+        },
+        { session },
+      );
+    });
+    return { promotedUserId: promoted };
+  } finally {
+    await session.endSession();
+  }
+}
+
 export async function seatInvariants(db: Db, contestId: string) {
   const cid = new ObjectId(contestId);
   const contest = await db.collection('contests').findOne({ _id: cid });

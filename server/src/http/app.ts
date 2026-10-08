@@ -8,7 +8,7 @@ import { transitionContest } from '../domain/contests.js';
 import { HttpError } from '../domain/errors.js';
 import { enqueueSubmission, latestPublished, publishedVersions } from '../domain/judging.js';
 import { type RunCase } from '../domain/problems.js';
-import { reserveSeat } from '../domain/registration.js';
+import { reserveSeat, withdrawSeat } from '../domain/registration.js';
 import { checkPassword, hashPassword, issueRefresh, readAccess, revokeRefresh, rotateRefresh, signAccess } from './auth.js';
 import { assertVerified, newVerifyToken, publicUser, runSamples, verifyEmail } from '../domain/product.js';
 
@@ -288,6 +288,12 @@ export function createApp(deps: AppDeps) {
     const result = await reserveSeat(db, req.params.id, user.sub);
     const status = result.outcome === 'reserved' ? 201 : 200;
     res.status(status).json(result);
+  }));
+
+  app.delete('/api/seats/:id', asyncRoute(async (req, res) => {
+    const user = auth(req);
+    const result = await withdrawSeat(db, req.params.id, user.sub);
+    res.json(result);
   }));
 
   app.get('/api/archive', asyncRoute(async (req, res) => {

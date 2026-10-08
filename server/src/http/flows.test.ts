@@ -145,7 +145,7 @@ describe('contest lifecycle', () => {
     expect((await api('get', '/api/contests')).body.map((c: { id: string }) => c.id)).toContain(contestId);
   });
 
-  it('opens registration, seats one and waitlists the next', async () => {
+  it('opens registration, seats one, waitlists the next and promotes on withdrawal', async () => {
     expect((await api('post', `/api/contests/${contestId}/seats`, neha.token)).status).toBe(409);
     await api('post', `/api/contests/${contestId}/transition`, organiser, { to: 'registration_open' });
     expect((await api('post', `/api/contests/${contestId}/transition`, organiser, { to: 'published' })).status).toBe(409);
@@ -154,6 +154,9 @@ describe('contest lifecycle', () => {
     expect(first.status).toBe(201);
     const second = await api('post', `/api/contests/${contestId}/seats`, neha.token);
     expect(second.body.outcome).toBe('waitlisted');
+    expect((await api('delete', `/api/seats/${first.body.seatId}`, ravi.token)).status).toBe(200);
+    const promoted = await api('get', `/api/contests/${contestId}/seat`, neha.token);
+    expect(promoted.body.status).toBe('reserved');
 
     const hidden = await api('get', `/api/contests/${contestId}`, neha.token);
     expect(hidden.body.problems).toEqual([]);
