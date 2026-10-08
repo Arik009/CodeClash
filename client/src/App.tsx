@@ -78,7 +78,7 @@ export default function App() {
           <Route path="/" element={<Home signedIn={!!session} />} />
           <Route path="/auth" element={session && !unverified ? <Navigate to="/arena" /> : <Auth onSession={setSession} />} />
           <Route path="/arena" element={<Arena />} />
-          <Route path="/arena/:id" element={<ContestRoom />} />
+          <Route path="/arena/:id" element={<ContestRoom me={session?.user.id ?? null} />} />
           <Route path="/problemset" element={<Problemset />} />
           <Route path="/practice/:versionId" element={<Practice signedIn={!!session} />} />
           <Route path="/control" element={isOrganiser ? <Control /> : session ? <Navigate to="/arena" /> : signIn} />

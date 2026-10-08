@@ -5,6 +5,7 @@ import { ensureIndexes } from '../db/indexes.js';
 import { tickContests, transitionContest } from './contests.js';
 import { HttpError } from './errors.js';
 import { claimSubmission, commitVerdict, enqueueSubmission, reclaimSubmission } from './judging.js';
+import { reserveSeat, seatInvariants } from './registration.js';
 
 let repl: MongoMemoryReplSet;
 let client: MongoClient;
@@ -23,6 +24,24 @@ afterAll(async () => {
   await repl.stop();
 });
 
+async function openContest(capacity: number) {
+  const inserted = await db.collection('contests').insertOne({
+    title: 'burst',
+    type: 'coding',
+    capacity,
+    reserved: 0,
+    waitlistSeq: 0,
+    status: 'registration_open',
+    startsAt: new Date(Date.now() + 3600_000),
+    endsAt: new Date(Date.now() + 3 * 3600_000),
+    freezeAt: new Date(Date.now() + 2 * 3600_000),
+    registrationOpensAt: new Date(Date.now() - 3600_000),
+    scoringMode: 'icpc',
+    problemIds: [],
+  });
+  return String(inserted.insertedId);
+}
+
 async function user() {
   const inserted = await db.collection('users').insertOne({
     email: `${new ObjectId().toHexString()}@example.com`,
@@ -33,6 +52,40 @@ async function user() {
   });
   return String(inserted.insertedId);
 }
+
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>) {
+  const out = new Array<R>(items.length);
+  let cursor = 0;
+  async function worker() {
+    for (;;) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) return;
+      out[index] = await fn(items[index]!);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+  return out;
+}
+
+describe('seats', () => {
+  it('gives exactly 200 seats to 400 distinct users and no duplicates', async () => {
+    const contestId = await openContest(200);
+    const ids = await mapPool(Array.from({ length: 400 }), 40, () => user());
+    const results = await mapPool(ids, 40, (id) => reserveSeat(db, contestId, id).catch((error: { status?: number }) => error));
+    const reserved = results.filter((r) => 'outcome' in r && r.outcome === 'reserved');
+    const full = results.filter((r) => 'status' in r && r.status === 409);
+    expect(reserved).toHaveLength(200);
+    expect(full).toHaveLength(200);
+    const again = await reserveSeat(db, contestId, ids[0]!);
+    expect(again.outcome).toBe('existing');
+    const inv = await seatInvariants(db, contestId);
+    expect(inv.overCapacity).toBe(false);
+    expect(inv.countMismatch).toBe(false);
+    expect(inv.duplicateUsers).toBe(0);
+    expect(inv.reserved).toBe(200);
+  });
+});
 
 describe('contests', () => {
   it('rejects a jump from draft to running', async () => {

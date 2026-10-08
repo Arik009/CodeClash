@@ -110,33 +110,6 @@ describe('practice', () => {
     const open = await api('get', `/api/problem-versions/${versionId}/public`);
     expect(open.body).toMatchObject({ tags: ['math'], limits: { python: { timeMs: 1000, memoryMb: 128 } } });
   });
-
-  it('accepts practice submissions on archived problems', async () => {
-    const sent = await api('post', '/api/practice/submissions', ravi.token, { problemVersionId: versionId, language: 'javascript', code: 'console.log(1)' });
-    expect(sent.status).toBe(202);
-    expect((await api('post', '/api/practice/submissions', ravi.token, { problemVersionId: String(new ObjectId()), language: 'python', code: 'x' })).status).toBe(404);
-  });
-
-  it('replays the same idempotency key and runs samples without storing', async () => {
-    const first = await request(app)
-      .post('/api/practice/submissions')
-      .set('authorization', `Bearer ${ravi.token}`)
-      .set('idempotency-key', 'practice-once')
-      .send({ problemVersionId: versionId, language: 'python', code: 'print(1)' });
-    const second = await request(app)
-      .post('/api/practice/submissions')
-      .set('authorization', `Bearer ${ravi.token}`)
-      .set('idempotency-key', 'practice-once')
-      .send({ problemVersionId: versionId, language: 'python', code: 'print(9)' });
-    expect(first.status).toBe(202);
-    expect(second.status).toBe(200);
-    expect(second.body.replay).toBe(true);
-    expect(second.body.id).toBe(first.body.id);
-
-    const ran = await api('post', '/api/run', neha.token, { problemVersionId: versionId, language: 'python', code: '# REF' });
-    expect(ran.body.results[0].verdict).toBe('AC');
-    expect(await db.collection('submissions').countDocuments({ code: '# REF' })).toBe(0);
-  });
 });
 
 describe('contest lifecycle', () => {
@@ -170,6 +143,66 @@ describe('contest lifecycle', () => {
     expect(created.status).toBe(201);
     contestId = created.body.id;
     expect((await api('get', '/api/contests')).body.map((c: { id: string }) => c.id)).toContain(contestId);
+  });
+
+  it('opens registration and seats one, after which the contest is full', async () => {
+    expect((await api('post', `/api/contests/${contestId}/seats`, neha.token)).status).toBe(409);
+    await api('post', `/api/contests/${contestId}/transition`, organiser, { to: 'registration_open' });
+    expect((await api('post', `/api/contests/${contestId}/transition`, organiser, { to: 'published' })).status).toBe(409);
+
+    const first = await api('post', `/api/contests/${contestId}/seats`, ravi.token);
+    expect(first.status).toBe(201);
+    expect((await api('post', `/api/contests/${contestId}/seats`, neha.token)).status).toBe(409);
+
+    const hidden = await api('get', `/api/contests/${contestId}`, neha.token);
+    expect(hidden.body.problems).toEqual([]);
+  });
+
+  it('accepts practice submissions on archived problems', async () => {
+    const sent = await api('post', '/api/practice/submissions', ravi.token, { problemVersionId: versionId, language: 'javascript', code: 'console.log(1)' });
+    expect(sent.status).toBe(202);
+    expect((await api('post', '/api/practice/submissions', ravi.token, { problemVersionId: String(new ObjectId()), language: 'python', code: 'x' })).status).toBe(404);
+  });
+
+  it('replays the same idempotency key and runs samples without storing', async () => {
+    const first = await request(app)
+      .post('/api/practice/submissions')
+      .set('authorization', `Bearer ${ravi.token}`)
+      .set('idempotency-key', 'practice-once')
+      .send({ problemVersionId: versionId, language: 'python', code: 'print(1)' });
+    const second = await request(app)
+      .post('/api/practice/submissions')
+      .set('authorization', `Bearer ${ravi.token}`)
+      .set('idempotency-key', 'practice-once')
+      .send({ problemVersionId: versionId, language: 'python', code: 'print(9)' });
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(200);
+    expect(second.body.replay).toBe(true);
+    expect(second.body.id).toBe(first.body.id);
+
+    const ran = await api('post', '/api/run', neha.token, { problemVersionId: versionId, language: 'python', code: '# REF' });
+    expect(ran.body.results[0].verdict).toBe('AC');
+    expect(await db.collection('submissions').countDocuments({ code: '# REF' })).toBe(0);
+  });
+
+  it('refuses a seat until the email is verified, then releases every seat on cancel', async () => {
+    const raw = await api('post', '/api/auth/register', undefined, { email: 'late@example.com', password: 'longpassword', displayName: 'Late' });
+    const hour = 60_000;
+    const created = await api('post', '/api/contests', organiser, {
+      title: 'Cancel cup', type: 'coding', capacity: 2, scoringMode: 'icpc', problemIds: [problemId],
+      registrationOpensAt: new Date(Date.now() - hour).toISOString(),
+      startsAt: new Date(Date.now() + hour).toISOString(),
+      freezeAt: new Date(Date.now() + 2 * hour).toISOString(),
+      endsAt: new Date(Date.now() + 3 * hour).toISOString(),
+    });
+    await api('post', `/api/contests/${created.body.id}/transition`, organiser, { to: 'registration_open' });
+    expect((await api('post', `/api/contests/${created.body.id}/seats`, raw.body.access)).status).toBe(403);
+    await api('post', '/api/auth/verify', undefined, { token: raw.body.verifyToken });
+    expect((await api('post', `/api/contests/${created.body.id}/seats`, raw.body.access)).status).toBe(201);
+    expect((await api('post', `/api/contests/${created.body.id}/transition`, organiser, { to: 'cancelled' })).body.to).toBe('cancelled');
+    expect((await api('get', `/api/contests/${created.body.id}/seat`, raw.body.access)).body).toBeNull();
+    const contest = await db.collection('contests').findOne({ _id: new ObjectId(created.body.id) });
+    expect(contest?.reserved).toBe(0);
   });
 });
 

@@ -1,9 +1,9 @@
-import { ArrowLeft, Clock, List, Lock, Users } from 'lucide-react';
+import { ArrowLeft, Check, Clock, List, Lock, UserPlus, Users } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { ProblemView, type Limits } from '../problem';
-import { Alert, Empty, errorText, formatLeft, formatWhen, letter, StatusPill, useLanguage, useNow } from '../ui';
+import { Alert, Empty, errorText, formatLeft, formatWhen, letter, StatusPill, toast, useLanguage, useNow } from '../ui';
 
 interface Problem { problemId: string; versionId: string; title: string; statement: string; samples: string; editorial: string | null; limits?: Limits }
 interface Contest {
@@ -20,16 +20,19 @@ interface Contest {
   problemCount: number;
   problems: Problem[];
 }
+interface Seat { seatId: string; status: string; position: number | null }
 
+const ACTIVE_SEAT = ['reserved', 'modified', 'competing'];
 type Tab = 'problems';
 
-export function ContestRoom() {
+export function ContestRoom({ me }: { me: string | null }) {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const tab = (params.get('tab') as Tab | null) ?? 'problems';
   const openLetter = params.get('p') ?? '';
   const [contest, setContest] = useState<Contest | null>(null);
   const [skew, setSkew] = useState(0);
+  const [seat, setSeat] = useState<Seat | null>(null);
   const [language] = useLanguage();
   const [error, setError] = useState('');
   const now = useNow(1000) + skew;
@@ -38,10 +41,12 @@ export function ContestRoom() {
     setContest(c);
     setSkew(new Date(c.serverNow).getTime() - Date.now());
   }).catch((e) => setError(errorText(e))), [id]);
+  const loadSeat = useCallback(() => (me ? api<Seat | null>(`/api/contests/${id}/seat`).then(setSeat).catch(() => {}) : Promise.resolve()), [id, me]);
 
   useEffect(() => {
     void loadContest();
-  }, [loadContest]);
+    void loadSeat();
+  }, [loadContest, loadSeat]);
 
   function go(next: { tab?: Tab; p?: string }) {
     const merged = { tab, p: openLetter, ...next };
@@ -49,11 +54,24 @@ export function ContestRoom() {
     setParams(Object.fromEntries(entries));
   }
 
+  async function reserve() {
+    setError('');
+    try {
+      await api(`/api/contests/${id}/seats`, { method: 'POST' });
+      toast('You are registered', 'ok');
+      await Promise.all([loadSeat(), loadContest()]);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+
   if (!contest) {
     return <div className="page">{error ? <Alert>{error}</Alert> : <div className="skeleton" style={{ height: '8rem' }} />}</div>;
   }
 
   const live = ['running', 'frozen'].includes(contest.status);
+  const hasSeat = seat ? ACTIVE_SEAT.includes(seat.status) : false;
+  const canRegister = ['registration_open', 'running'].includes(contest.status);
   const clock = countdown(contest, now);
   const problemIndex = openLetter ? openLetter.toUpperCase().charCodeAt(0) - 65 : -1;
   const problem = contest.problems[problemIndex] ?? null;
@@ -78,6 +96,17 @@ export function ContestRoom() {
             {live ? <div className={`bar ${contest.status === 'frozen' ? 'warn' : 'ok'}`}><span style={{ width: `${elapsed(contest, now)}%` }} /></div> : null}
           </div>
         ) : <div className="clock-block"><p className="label">contest is over</p><div className="clock muted">final</div></div>}
+        <div className="seat-line">
+          {!me ? (
+            <><Link className="btn primary sm" to="/auth" state={{ from: `/arena/${id}` }}><UserPlus size={14} /> sign in to register</Link><span className="muted small">You can read the standings without an account.</span></>
+          ) : seat && hasSeat ? (
+            <>
+              <span className="pill ok"><Check size={12} /> {seat.status === 'competing' ? 'competing' : 'registered'}</span>
+            </>
+          ) : canRegister ? (
+            <><button className="btn primary sm" type="button" onClick={reserve}><UserPlus size={14} /> register</button><span className="muted small">{Math.max(0, contest.capacity - contest.reserved)} seats left</span></>
+          ) : <span className="muted small">Registration is closed.</span>}
+        </div>
       </section>
 
       {error ? <Alert>{error}</Alert> : null}

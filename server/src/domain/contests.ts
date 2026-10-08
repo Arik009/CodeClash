@@ -9,6 +9,19 @@ export async function transitionContest(db: Db, contestId: string, to: ContestSt
   const from = contest.status as ContestStatus;
   if (!canTransition(from, to)) throw new HttpError(409, `Cannot move from ${from} to ${to}`);
   await db.collection('contests').updateOne({ _id: contest._id, status: from }, { $set: { status: to } });
+  if (to === 'cancelled') {
+    await db.collection('seats').updateMany(
+      { contestId: contest._id, active: true },
+      { $set: { status: 'withdrawn', active: false } },
+    );
+    await db.collection('contests').updateOne({ _id: contest._id }, { $set: { reserved: 0 } });
+  }
+  if (to === 'running') {
+    await db.collection('seats').updateMany(
+      { contestId: contest._id, status: { $in: ['reserved', 'modified'] } },
+      { $set: { status: 'competing' } },
+    );
+  }
   await db.collection('outbox').insertOne({
     type: 'ContestStatus',
     payload: { contestId, status: to },

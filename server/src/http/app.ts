@@ -8,6 +8,7 @@ import { transitionContest } from '../domain/contests.js';
 import { HttpError } from '../domain/errors.js';
 import { enqueueSubmission, latestPublished, publishedVersions } from '../domain/judging.js';
 import { type RunCase } from '../domain/problems.js';
+import { reserveSeat } from '../domain/registration.js';
 import { checkPassword, hashPassword, issueRefresh, readAccess, revokeRefresh, rotateRefresh, signAccess } from './auth.js';
 import { assertVerified, newVerifyToken, publicUser, runSamples, verifyEmail } from '../domain/product.js';
 
@@ -249,6 +250,16 @@ export function createApp(deps: AppDeps) {
     });
   }));
 
+  app.get('/api/contests/:id/seat', asyncRoute(async (req, res) => {
+    const user = auth(req);
+    const seat = await db.collection('seats').findOne({
+      contestId: new ObjectId(req.params.id),
+      userId: new ObjectId(user.sub),
+      active: true,
+    });
+    res.json(seat ? { seatId: String(seat._id), status: seat.status, position: seat.waitlistPos ?? null } : null);
+  }));
+
   app.get('/api/catalog', asyncRoute(async (req, res) => {
     requireRole(req, STAFF);
     const versions = await publishedVersions(db);
@@ -269,6 +280,14 @@ export function createApp(deps: AppDeps) {
       freezeAt: c.freezeAt,
       endsAt: c.endsAt,
     })));
+  }));
+
+  app.post('/api/contests/:id/seats', asyncRoute(async (req, res) => {
+    const user = auth(req);
+    await assertVerified(db, user.sub);
+    const result = await reserveSeat(db, req.params.id, user.sub);
+    const status = result.outcome === 'reserved' ? 201 : 200;
+    res.status(status).json(result);
   }));
 
   app.get('/api/archive', asyncRoute(async (req, res) => {
