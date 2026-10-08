@@ -2,9 +2,11 @@ import {
   quizScore, streakBonus, defaultLimits, draftSpec, parseSpec, ROLES, SOURCE_LANGUAGES, SpecError, validateInput,
   type ContestStatus, type Role,
 } from '@codeclash/shared';
+import { randomBytes } from 'node:crypto';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { BSON, type Db, ObjectId } from 'mongodb';
+import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from 'prom-client';
 import { z } from 'zod';
 import { auditCollection } from '../db/audit.js';
 import { transitionContest } from '../domain/contests.js';
@@ -82,7 +84,13 @@ async function audit(
 export function createApp(deps: AppDeps) {
   const { db, redis } = deps;
   const app = express();
-  app.use(cors({ origin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173' }));
+  app.use((req, res, next) => {
+    const requestId = req.header('x-request-id') || randomBytes(8).toString('hex');
+    res.setHeader('x-request-id', requestId);
+    res.locals.requestId = requestId;
+    next();
+  });
+  app.use(cors({ origin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173', exposedHeaders: ['x-request-id'] }));
   app.use(express.json({ limit: '256kb' }));
 
   app.get('/health', asyncRoute(async (_req, res) => {
@@ -90,6 +98,37 @@ export function createApp(deps: AppDeps) {
     if (redis.ping) await redis.ping();
     else await redis.get('health:ping');
     res.json({ ok: true, mongo: true, redis: true });
+  }));
+
+  const metrics = new Registry();
+  collectDefaultMetrics({ register: metrics });
+  new Gauge({
+    name: 'codeclash_queue_depth',
+    help: 'Submissions waiting for a judge',
+    labelNames: ['kind'],
+    registers: [metrics],
+    async collect() {
+      for (const kind of ['contest', 'practice']) {
+        this.set({ kind }, await db.collection('submissions').countDocuments({ status: 'queued', kind }));
+      }
+    },
+  });
+  const submitted = new Counter({ name: 'codeclash_submissions_total', help: 'Accepted submissions', labelNames: ['kind'], registers: [metrics] });
+  const latency = new Histogram({
+    name: 'codeclash_http_seconds',
+    help: 'API latency',
+    labelNames: ['method', 'status'],
+    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+    registers: [metrics],
+  });
+  app.use((req, res, next) => {
+    const stop = latency.startTimer({ method: req.method });
+    res.on('finish', () => stop({ status: String(res.statusCode) }));
+    next();
+  });
+
+  app.get('/metrics', asyncRoute(async (_req, res) => {
+    res.type(metrics.contentType).send(await metrics.metrics());
   }));
 
   app.post('/api/auth/register', asyncRoute(async (req, res) => {
@@ -632,6 +671,7 @@ export function createApp(deps: AppDeps) {
     const queued = await enqueueSubmission(db, { ...body, userId: user.sub, contestId: req.params.id, kind: 'contest', idempotencyKey: idempotencyKey(req) });
     if (!queued.replay) {
       await redis.xadd(queued.stream, '*', 'submissionId', queued.id);
+      submitted.inc({ kind: 'contest' });
     }
     res.status(queued.replay ? 200 : 202).json({ id: queued.id, replay: queued.replay });
   }));
@@ -675,6 +715,7 @@ export function createApp(deps: AppDeps) {
     const queued = await enqueueSubmission(db, { ...body, userId: user.sub, kind: 'practice', idempotencyKey: idempotencyKey(req) });
     if (!queued.replay) {
       await redis.xadd(queued.stream, '*', 'submissionId', queued.id);
+      submitted.inc({ kind: 'practice' });
     }
     res.status(queued.replay ? 200 : 202).json({ id: queued.id, replay: queued.replay });
   }));
@@ -927,7 +968,7 @@ export function createApp(deps: AppDeps) {
       res.status(400).json({ error: 'Invalid id' });
       return;
     }
-    deps.log?.info({ err: error }, 'unhandled');
+    deps.log?.info({ err: error, requestId: res.locals.requestId }, 'unhandled');
     res.status(500).json({ error: 'Internal error' });
   });
 

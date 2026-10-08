@@ -61,6 +61,7 @@ let versionId = '';
 async function signUp(email: string, displayName: string) {
   const res = await api('post', '/api/auth/register', undefined, { email, password: 'longpassword', displayName });
   expect(res.status).toBe(201);
+  expect(res.headers['x-request-id']).toBeTruthy();
   if (res.body.verifyToken) {
     expect((await api('post', '/api/auth/verify', undefined, { token: res.body.verifyToken })).body.emailVerified).toBe(true);
   }

@@ -98,6 +98,13 @@ describe('routes', () => {
     expect(afterReplay.status).toBe(401);
   });
 
+  it('serves Prometheus metrics', async () => {
+    const app = createApp({ db, redis });
+    const res = await request(app).get('/metrics');
+    expect(res.text).toContain('codeclash_queue_depth');
+    expect(res.text).toContain('process_cpu_user_seconds_total');
+  });
+
   it('answers 400 for a malformed id instead of 500', async () => {
     const app = createApp({ db, redis });
     const res = await request(app).get('/api/contests/not-an-id');
