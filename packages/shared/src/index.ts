@@ -50,3 +50,110 @@ export function allowedTransitions(from: ContestStatus): ContestStatus[] {
 export function canTransition(from: ContestStatus, to: ContestStatus): boolean {
   return NEXT[from].includes(to);
 }
+
+export interface Attempt {
+  problemId: string;
+  verdict: Verdict;
+  submittedAt: Date;
+  submissionId: string;
+}
+
+export interface IcpcRow {
+  solved: number;
+  penalty: number;
+  lastAcAt: Date | null;
+}
+
+/** ICPC: solved desc, penalty asc, earlier last AC. Unsolved problems add 0. CE never counts. */
+export function icpcRow(attempts: Attempt[], contestStart: Date, contestEnd: Date): IcpcRow {
+  const byProblem = new Map<string, Attempt[]>();
+  for (const attempt of attempts) {
+    const list = byProblem.get(attempt.problemId) ?? [];
+    list.push(attempt);
+    byProblem.set(attempt.problemId, list);
+  }
+
+  let solved = 0;
+  let penalty = 0;
+  let lastAcAt: Date | null = null;
+
+  for (const list of byProblem.values()) {
+    const ordered = [...list].sort((a, b) => a.submittedAt.getTime() - b.submittedAt.getTime());
+    const firstAc = ordered.find(
+      (a) => a.verdict === 'AC' && a.submittedAt.getTime() <= contestEnd.getTime(),
+    );
+    if (!firstAc) continue;
+    const wrongBefore = ordered.filter(
+      (a) =>
+        a.submittedAt.getTime() < firstAc.submittedAt.getTime() &&
+        a.verdict !== 'AC' &&
+        a.verdict !== 'CE',
+    ).length;
+    const minutes = Math.floor((firstAc.submittedAt.getTime() - contestStart.getTime()) / 60000);
+    solved += 1;
+    penalty += minutes + 20 * wrongBefore;
+    if (!lastAcAt || firstAc.submittedAt.getTime() > lastAcAt.getTime()) {
+      lastAcAt = firstAc.submittedAt;
+    }
+  }
+
+  return { solved, penalty, lastAcAt };
+}
+
+export interface ProblemCell {
+  solved: boolean;
+  /** Rejected attempts before the first AC (all of them when unsolved); CE is free. */
+  tries: number;
+  minute: number | null;
+}
+
+/** One standings cell per attempted problem, in the same terms as icpcRow. */
+export function problemCells(attempts: Attempt[], contestStart: Date, contestEnd: Date): Record<string, ProblemCell> {
+  const cells: Record<string, ProblemCell> = {};
+  const ordered = [...attempts].sort((a, b) => a.submittedAt.getTime() - b.submittedAt.getTime());
+  for (const attempt of ordered) {
+    const cell = cells[attempt.problemId] ?? { solved: false, tries: 0, minute: null };
+    cells[attempt.problemId] = cell;
+    if (cell.solved || attempt.verdict === 'CE') continue;
+    if (attempt.verdict === 'AC' && attempt.submittedAt.getTime() <= contestEnd.getTime()) {
+      cell.solved = true;
+      cell.minute = Math.floor((attempt.submittedAt.getTime() - contestStart.getTime()) / 60000);
+    } else if (attempt.verdict !== 'AC') {
+      cell.tries += 1;
+    }
+  }
+  return cells;
+}
+
+export function compareIcpc(a: IcpcRow & { userId: string }, b: IcpcRow & { userId: string }): number {
+  if (a.solved !== b.solved) return b.solved - a.solved;
+  if (a.penalty !== b.penalty) return a.penalty - b.penalty;
+  const at = a.lastAcAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
+  const bt = b.lastAcAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
+  if (at !== bt) return at - bt;
+  return a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0;
+}
+
+export interface StandingRow extends IcpcRow {
+  userId: string;
+  quizPoints: number;
+}
+
+/** Solved first, then quiz points, then penalty. */
+export function compareStanding(a: StandingRow, b: StandingRow): number {
+  if (a.solved !== b.solved) return b.solved - a.solved;
+  if (a.quizPoints !== b.quizPoints) return b.quizPoints - a.quizPoints;
+  return compareIcpc(a, b);
+}
+
+/** Quiz speed. Returns null when the answer is late (rejected). Wrong answers score 0. */
+export function quizScore(base: number, tSeconds: number, windowSeconds: number, correct: boolean): number | null {
+  if (tSeconds < 0 || tSeconds > windowSeconds) return null;
+  if (!correct) return 0;
+  return Math.round(base * (1 - 0.5 * (tSeconds / windowSeconds)));
+}
+
+export function firstSolveBonusPoints(maxPoints: number, mode: 'icpc' | 'quiz' | 'ioi'): number {
+  if (mode === 'icpc') return 0;
+  return Math.round(maxPoints * 0.1);
+}
