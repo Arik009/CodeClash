@@ -154,6 +154,12 @@ export function quizScore(base: number, tSeconds: number, windowSeconds: number,
   return Math.round(base * (1 - 0.5 * (tSeconds / windowSeconds)));
 }
 
+/** Extra points for a correct quiz answer after `priorCorrect` correct answers in a row. Capped at five steps. */
+export function streakBonus(base: number, priorCorrect: number): number {
+  const steps = Math.min(Math.max(0, priorCorrect), 5);
+  return Math.round(base * 0.1 * steps);
+}
+
 export function firstSolveBonusPoints(maxPoints: number, mode: 'icpc' | 'quiz' | 'ioi'): number {
   if (mode === 'icpc') return 0;
   return Math.round(maxPoints * 0.1);

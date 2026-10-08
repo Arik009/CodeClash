@@ -7,7 +7,7 @@ import { HttpError } from './errors.js';
 import { claimSubmission, commitVerdict, enqueueSubmission, reclaimSubmission } from './judging.js';
 import { testsFromZip } from './problems.js';
 import { reserveSeat, seatInvariants, withdrawSeat } from './registration.js';
-import { awardFirstSolve, dispatchOutbox, leaderboard } from './scoring.js';
+import { awardFirstSolve, dispatchOutbox, leaderboard, recomputeStanding } from './scoring.js';
 import AdmZip from 'adm-zip';
 
 let repl: MongoMemoryReplSet;
@@ -293,5 +293,22 @@ describe('contest rules', () => {
     await expect(enqueueSubmission(db, {
       userId: uid, contestId, problemVersionId: String(other.insertedId), language: 'python', code: 'print(1)', kind: 'contest',
     })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('adds quiz points to the standing', async () => {
+    const { contestId, uid } = await liveContest({ freezeAt: new Date(Date.now() + 600_000) });
+    await db.collection('quiz_answers').insertOne({
+      questionId: new ObjectId(), contestId: new ObjectId(contestId), userId: new ObjectId(uid), choice: 0, score: 750, receivedAt: new Date(),
+    });
+    await recomputeStanding(db, contestId, uid);
+    const board = await leaderboard(db, contestId);
+    expect(board[0]).toMatchObject({ quizPoints: 750, displayName: 'n' });
+  });
+
+  it('allows one answer per question', async () => {
+    const questionId = new ObjectId();
+    const row = { questionId, userId: new ObjectId(), contestId: new ObjectId(), choice: 1, score: 0, receivedAt: new Date() };
+    await db.collection('quiz_answers').insertOne({ ...row });
+    await expect(db.collection('quiz_answers').insertOne({ ...row, _id: new ObjectId() })).rejects.toMatchObject({ code: 11000 });
   });
 });

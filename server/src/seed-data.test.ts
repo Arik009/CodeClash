@@ -1,7 +1,7 @@
 import { seededRng } from '@codeclash/shared';
 import { describe, expect, it } from 'vitest';
 import {
-  emailFor, initialRating, PARTICIPANTS, simulateContest, solveChance, STAFF, STAFF_DOMAIN, STUDENT_DOMAIN,
+  emailFor, initialRating, MORE_QUIZ, PARTICIPANTS, simulateContest, solveChance, STAFF, STAFF_DOMAIN, STUDENT_DOMAIN,
 } from './seed-data.js';
 
 describe('seed people', () => {
@@ -53,5 +53,17 @@ describe('contest simulation', () => {
     const solvedA = attempts.filter((a) => a.problemId === 'A' && a.verdict === 'AC').length;
     const solvedC = attempts.filter((a) => a.problemId === 'C' && a.verdict === 'AC').length;
     expect(solvedA).toBeGreaterThan(solvedC);
+  });
+});
+
+describe('quiz bank', () => {
+  it('has well-formed questions with three options', () => {
+    expect(MORE_QUIZ.length).toBe(40);
+    for (const q of MORE_QUIZ) {
+      expect(q.options).toHaveLength(3);
+      expect(q.correctIndex).toBeGreaterThanOrEqual(0);
+      expect(q.correctIndex).toBeLessThan(3);
+    }
+    expect(new Set(MORE_QUIZ.map((q) => q.prompt)).size).toBe(MORE_QUIZ.length);
   });
 });

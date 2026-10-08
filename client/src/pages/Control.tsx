@@ -1,4 +1,4 @@
-import { ArrowRight, Plus, Search } from 'lucide-react';
+import { ArrowRight, Megaphone, Plus, Search } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
@@ -33,12 +33,14 @@ export function Control() {
   const [search, setSearch] = useState('');
   const [contests, setContests] = useState<Contest[]>([]);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [selected, setSelected] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   const reload = useCallback(async () => {
     const rows = await api<Contest[]>('/api/contests');
     setContests(rows);
+    setSelected((current) => current || rows.find((c) => c.type !== 'coding' && (c.status === 'running' || c.status === 'frozen'))?.id || '');
   }, []);
 
   useEffect(() => {
@@ -106,12 +108,23 @@ export function Control() {
     await move(contest, 'cancelled', 'cancel');
   }
 
+  async function openQuestion() {
+    setError('');
+    try {
+      const opened = await api<{ prompt: string }>(`/api/contests/${selected}/quiz/next`, { method: 'POST' });
+      toast(`Open now: ${opened.prompt}`, 'ok');
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  const quizContests = contests.filter((c) => c.type !== 'coding' && (c.status === 'running' || c.status === 'frozen'));
   const shownCatalog = catalog.filter((item) => `${item.title} ${item.tags.join(' ')}`.toLowerCase().includes(search.toLowerCase()));
   const liveCount = contests.filter((c) => c.status === 'running' || c.status === 'frozen').length;
 
   return (
     <div className="page">
-      <div className="page-head"><div><h1>Control</h1><p>Run the contest lifecycle.</p></div></div>
+      <div className="page-head"><div><h1>Control</h1><p>Run the contest lifecycle and push quiz questions.</p></div></div>
       {error ? <Alert>{error}</Alert> : null}
 
       <div className="stats">
@@ -210,6 +223,19 @@ export function Control() {
         </div>
 
         <aside className="side">
+          <Box title="quiz">
+            {quizContests.length === 0 ? <p className="muted small" style={{ margin: 0 }}>No live quiz or mixed contest.</p> : (
+              <div className="stack tight">
+                <select aria-label="Contest" value={selected} onChange={(e) => setSelected(e.target.value)}>
+                  {quizContests.map((contest) => <option key={contest.id} value={contest.id}>{contest.title}</option>)}
+                </select>
+                <button className="btn primary" type="button" disabled={!quizContests.some((c) => c.id === selected)} onClick={openQuestion}>
+                  <Megaphone size={14} /> open next question
+                </button>
+                <p className="muted small" style={{ margin: 0 }}>Everyone in the room sees it at once. A new question can open once the current one closes.</p>
+              </div>
+            )}
+          </Box>
           <Box title="lifecycle">
             <ol className="muted small" style={{ margin: 0, paddingLeft: '1.1rem', lineHeight: 1.9 }}>
               <li>draft → open registration</li>

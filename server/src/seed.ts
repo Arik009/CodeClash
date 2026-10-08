@@ -3,12 +3,12 @@ import 'dotenv/config';
 import { hash } from '@node-rs/argon2';
 import { Redis } from 'ioredis';
 import { MongoClient, ObjectId } from 'mongodb';
-import { CATALOG } from './catalog.js';
+import { CATALOG, QUIZ_BANK } from './catalog.js';
 import { MORE } from './catalog-more.js';
 import { ensureIndexes } from './db/indexes.js';
 import { awardFirstSolve, recomputeStanding } from './domain/scoring.js';
 import {
-  DEMO_PASSWORD, emailFor, initialRating, PARTICIPANTS, practiceDays, simulateContest, STAFF, STAFF_DOMAIN,
+  DEMO_PASSWORD, emailFor, initialRating, MORE_QUIZ, PARTICIPANTS, practiceDays, simulateContest, STAFF, STAFF_DOMAIN,
   STUDENT_DOMAIN, type SimProblem,
 } from './seed-data.js';
 
@@ -294,10 +294,20 @@ for (const person of people) {
 }
 for (let i = 0; i < submissions.length; i += 1000) await db.collection('submissions').insertMany(submissions.slice(i, i + 1000));
 
+// ---------- quiz bank ----------
+for (const question of [...QUIZ_BANK, ...MORE_QUIZ]) {
+  await db.collection('quiz_bank').updateOne(
+    { prompt: question.prompt },
+    { $setOnInsert: { ...question, basePoints: 1000, windowSec: 30 } },
+    { upsert: true },
+  );
+}
+
 const visible = practice.length + libraryPool.length;
 console.log(`problems: ${CATALOG.length + MORE.length} catalog (${visible} in the archive)`);
 console.log(`users: ${people.length} participants, ${STAFF.length} staff, admin ${admin.email}`);
 console.log(`contests: ${past.length} published, Warmup round live`);
 console.log(`submissions: ${contestSubmissions} in contests, ${submissions.length} practice, ${live.length} sent to the judge`);
+console.log(`quiz bank: ${QUIZ_BANK.length + MORE_QUIZ.length} questions`);
 console.log(`every demo account uses the password "${DEMO_PASSWORD}"`);
 await client.close();

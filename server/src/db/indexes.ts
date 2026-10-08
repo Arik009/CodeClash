@@ -15,6 +15,8 @@ export async function ensureIndexes(db: Db) {
   await db.collection('refresh_tokens').createIndex({ tokenHash: 1 }, { unique: true });
   await db.collection('refresh_tokens').createIndex({ family: 1 });
   await db.collection('refresh_tokens').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+  await db.collection('quiz_answers').createIndex({ questionId: 1, userId: 1 }, { unique: true });
+  await db.collection('quiz_questions').createIndex({ contestId: 1, opensAt: -1 });
   await db.collection('submissions').createIndex({ contestId: 1, userId: 1, submittedAt: -1 });
   await db.collection('submissions').createIndex({ problemId: 1, verdict: 1 });
   await db.collection('submissions').createIndex({ userId: 1, verdict: 1 });

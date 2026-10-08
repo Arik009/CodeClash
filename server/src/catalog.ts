@@ -239,3 +239,26 @@ export const CATALOG: CatalogProblem[] = [
     ],
   }),
 ];
+
+export const QUIZ_BANK: { prompt: string; options: string[]; correctIndex: number }[] = [
+  { prompt: 'Average lookup in a hash table is usually', options: ['O(1)', 'O(n)', 'O(n log n)'], correctIndex: 0 },
+  { prompt: 'Merge sort worst case is', options: ['O(n^2)', 'O(n log n)', 'O(log n)'], correctIndex: 1 },
+  { prompt: 'typeof NaN in JavaScript is', options: ['"undefined"', '"number"', '"NaN"'], correctIndex: 1 },
+  { prompt: 'TCP handshake flags are', options: ['SYN, SYN-ACK, ACK', 'ACK, SYN, FIN', 'SYN, ACK, SYN'], correctIndex: 0 },
+  { prompt: 'CAP during a partition trades', options: ['consistency and availability', 'speed and memory', 'latency and durability'], correctIndex: 0 },
+  { prompt: 'A stack removes from', options: ['the front only', 'the most recent end', 'a random index'], correctIndex: 1 },
+  { prompt: 'Binary search requires', options: ['a sorted range', 'a hash of the keys', 'a linked list'], correctIndex: 0 },
+  { prompt: 'HTTP 404 means', options: ['not found', 'unauthorized', 'rate limited'], correctIndex: 0 },
+  { prompt: 'HTTP 403 means', options: ['the server crashed', 'authenticated but forbidden', 'the body was empty'], correctIndex: 1 },
+  { prompt: 'A primary key must be', options: ['unique for each row', 'a foreign key', 'stored in Redis'], correctIndex: 0 },
+  { prompt: 'Git commit records', options: ['a snapshot of the tree', 'only the newest file', 'the remote URL'], correctIndex: 0 },
+  { prompt: 'BFS visits a graph', options: ['level by level', 'as deep as possible first', 'in alphabetical order'], correctIndex: 0 },
+  { prompt: 'An index speeds up', options: ['reads that match its key', 'every write, for free', 'network transfer'], correctIndex: 0 },
+  { prompt: 'SQL NULL compared with = is', options: ['unknown, not true', 'always true', 'always false and an error'], correctIndex: 0 },
+  { prompt: 'A race condition is', options: ['a result that depends on timing', 'a slow algorithm', 'a failed compile'], correctIndex: 0 },
+  { prompt: 'Idempotent means', options: ['repeating the call does not change the outcome again', 'the call is the fastest', 'the call has no input'], correctIndex: 0 },
+  { prompt: 'TLS protects', options: ['the channel from eavesdropping', 'the database schema', 'the CPU cache'], correctIndex: 0 },
+  { prompt: 'Big-O ignores', options: ['constant factors', 'how the input grows', 'the worst case'], correctIndex: 0 },
+  { prompt: 'A queue removes from', options: ['the end that was inserted earliest', 'the newest end', 'the middle'], correctIndex: 0 },
+  { prompt: 'Recursion needs', options: ['a base case', 'a global variable', 'a sorted array'], correctIndex: 0 },
+];

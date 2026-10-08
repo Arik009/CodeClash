@@ -59,6 +59,7 @@ The seed is deterministic (fixed random seed) and can be run again at any time. 
 - **Library cup**, a past contest, published so its standings and first solves are real outputs of the scoring code.
 - **Warmup round**, live now. Its first 40 minutes are simulated; eight fresh submissions go through the real judge when you seed.
 - **About 6,000 practice submissions** over the last 16 weeks.
+- **60 quiz questions.**
 
 Contest editorials stay hidden until that contest has ended or been published.
 
@@ -69,7 +70,7 @@ A new account has to confirm its email before it can take a seat or submit. In l
 - **Contests** lists rounds. A live round has a seat and a timer.
 - **Problemset** is practice. Run samples checks the visible examples and stores nothing. Submit judges the hidden tests.
 - **Authoring** (setter or admin) drafts a problem. **New problem** opens in the pane on the right.
-- **Control** (organiser or admin) creates a contest, moves it through registration, running, freeze, end, and publish, and can cancel it.
+- **Control** (organiser or admin) creates a contest, moves it through registration, running, freeze, end, and publish, opens quiz questions, and can cancel it.
 - **Admin** is people and the audit log.
 
 In the editor, Ctrl+Enter submits. The palette icon in the header changes the theme. The choice is saved in this browser.

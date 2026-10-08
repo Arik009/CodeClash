@@ -1,5 +1,6 @@
 import {
-  defaultLimits, draftSpec, parseSpec, ROLES, SOURCE_LANGUAGES, SpecError, validateInput, type ContestStatus, type Role,
+  quizScore, streakBonus, defaultLimits, draftSpec, parseSpec, ROLES, SOURCE_LANGUAGES, SpecError, validateInput,
+  type ContestStatus, type Role,
 } from '@codeclash/shared';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -7,7 +8,7 @@ import { BSON, type Db, ObjectId } from 'mongodb';
 import { z } from 'zod';
 import { auditCollection } from '../db/audit.js';
 import { transitionContest } from '../domain/contests.js';
-import { HttpError } from '../domain/errors.js';
+import { HttpError, isDuplicateKey } from '../domain/errors.js';
 import { enqueueSubmission, latestPublished, publishedVersions } from '../domain/judging.js';
 import { testsFromZip, type RunCase } from '../domain/problems.js';
 import { reserveSeat, withdrawSeat } from '../domain/registration.js';
@@ -632,6 +633,142 @@ export function createApp(deps: AppDeps) {
 
   app.get('/api/contests/:id/leaderboard', asyncRoute(async (req, res) => {
     res.json(await leaderboard(db, req.params.id));
+  }));
+
+  async function queueOutbox(type: string, payload: Record<string, unknown>) {
+    await db.collection('outbox').insertOne({ type, payload, createdAt: new Date(), sentAt: null });
+  }
+
+  async function requireLiveContest(contestId: ObjectId) {
+    const contest = await db.collection('contests').findOne({ _id: contestId });
+    if (!contest) throw new HttpError(404, 'Contest not found');
+    if (!['running', 'frozen'].includes(contest.status as string)) throw new HttpError(409, 'Contest is not running');
+    if (contest.type === 'coding') throw new HttpError(409, 'This contest has no quiz');
+    return contest;
+  }
+
+  app.post('/api/contests/:id/quiz', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['organiser', 'admin']);
+    const body = z.object({
+      prompt: z.string(),
+      options: z.array(z.string()).min(2),
+      correctIndex: z.number().int().nonnegative(),
+      basePoints: z.number().int().positive().default(1000),
+      windowSec: z.number().int().positive().default(30),
+    }).parse(req.body);
+    const inserted = await db.collection('quiz_questions').insertOne({
+      contestId: new ObjectId(req.params.id),
+      ...body,
+      opensAt: null,
+    });
+    await audit(db, user.sub, 'quiz.create', String(inserted.insertedId), 'allow');
+    res.status(201).json({ id: String(inserted.insertedId) });
+  }));
+
+  app.post('/api/contests/:id/quiz/next', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['organiser', 'admin']);
+    const contestId = new ObjectId(req.params.id);
+    await requireLiveContest(contestId);
+    const open = await db.collection('quiz_questions').findOne({ contestId, opensAt: { $gt: new Date(Date.now() - 120_000) } }, { sort: { opensAt: -1 } });
+    if (open && Date.now() - (open.opensAt as Date).getTime() < (open.windowSec as number) * 1000) {
+      throw new HttpError(409, 'The current question is still open');
+    }
+    const used = await db.collection('quiz_questions').find({ contestId }).project({ prompt: 1 }).toArray();
+    const next = await db.collection('quiz_bank').find({ prompt: { $nin: used.map((row) => row.prompt) } }).limit(1).next();
+    if (!next) throw new HttpError(404, 'The quiz bank is empty');
+    const opensAt = new Date();
+    const inserted = await db.collection('quiz_questions').insertOne({
+      contestId,
+      prompt: next.prompt,
+      options: next.options,
+      correctIndex: next.correctIndex,
+      basePoints: next.basePoints ?? 1000,
+      windowSec: next.windowSec ?? 30,
+      opensAt,
+    });
+    await audit(db, user.sub, 'quiz.open', String(inserted.insertedId), 'allow');
+    await queueOutbox('QuizOpened', { contestId: req.params.id, questionId: String(inserted.insertedId) });
+    res.status(201).json({ id: String(inserted.insertedId), prompt: next.prompt, opensAt });
+  }));
+
+  app.post('/api/quiz/:id/open', asyncRoute(async (req, res) => {
+    requireRole(req, ['organiser', 'admin']);
+    const question = await db.collection('quiz_questions').findOne({ _id: new ObjectId(req.params.id) });
+    if (!question) throw new HttpError(404, 'Question not found');
+    if (question.opensAt) throw new HttpError(409, 'Question was already opened');
+    await requireLiveContest(question.contestId as ObjectId);
+    const opensAt = new Date();
+    await db.collection('quiz_questions').updateOne({ _id: question._id }, { $set: { opensAt } });
+    await queueOutbox('QuizOpened', { contestId: String(question.contestId), questionId: req.params.id });
+    res.json({ opensAt });
+  }));
+
+  app.get('/api/contests/:id/quiz/current', asyncRoute(async (req, res) => {
+    const user = auth(req);
+    const question = await db.collection('quiz_questions')
+      .find({ contestId: new ObjectId(req.params.id), opensAt: { $ne: null } })
+      .sort({ opensAt: -1 })
+      .limit(1)
+      .next();
+    const now = new Date();
+    const answer = question
+      ? await db.collection('quiz_answers').findOne({ questionId: question._id, userId: new ObjectId(user.sub) })
+      : null;
+    const closed = question ? now.getTime() - (question.opensAt as Date).getTime() > (question.windowSec as number) * 1000 : false;
+    res.json({
+      serverNow: now.toISOString(),
+      question: question ? {
+        id: String(question._id),
+        prompt: question.prompt,
+        options: question.options,
+        basePoints: question.basePoints,
+        windowSec: question.windowSec,
+        opensAt: question.opensAt,
+        closed,
+        correctIndex: closed ? question.correctIndex : null,
+      } : null,
+      answer: answer ? { choice: answer.choice, score: answer.score } : null,
+    });
+  }));
+
+  app.post('/api/quiz/:id/answer', asyncRoute(async (req, res) => {
+    const user = auth(req);
+    const body = z.object({ choice: z.number().int().nonnegative() }).parse(req.body);
+    const question = await db.collection('quiz_questions').findOne({ _id: new ObjectId(req.params.id) });
+    if (!question?.opensAt) throw new HttpError(409, 'Question is not open');
+    const receivedAt = new Date();
+    await requireLiveContest(question.contestId as ObjectId);
+    const seat = await db.collection('seats').findOne({
+      contestId: question.contestId,
+      userId: new ObjectId(user.sub),
+      status: { $in: ['reserved', 'modified', 'competing'] },
+    });
+    if (!seat) throw new HttpError(403, 'A reserved seat is required');
+    if (body.choice >= (question.options as string[]).length) throw new HttpError(400, 'No such option');
+    const t = (receivedAt.getTime() - (question.opensAt as Date).getTime()) / 1000;
+    const correct = body.choice === question.correctIndex;
+    const earlier = await db.collection('quiz_answers').find({ contestId: question.contestId, userId: new ObjectId(user.sub) }).sort({ receivedAt: 1 }).toArray();
+    let priorCorrect = 0;
+    for (const answer of earlier) priorCorrect = (answer.score as number) > 0 ? priorCorrect + 1 : 0;
+    const base = quizScore(question.basePoints as number, t, question.windowSec as number, correct);
+    const bonus = correct && base !== null ? streakBonus(question.basePoints as number, priorCorrect) : 0;
+    const score = base === null ? null : base + bonus;
+    if (score === null) throw new HttpError(409, 'Answer window has closed');
+    try {
+      await db.collection('quiz_answers').insertOne({
+        questionId: question._id,
+        contestId: question.contestId,
+        userId: new ObjectId(user.sub),
+        choice: body.choice,
+        score,
+        receivedAt,
+      });
+    } catch (error) {
+      if (isDuplicateKey(error)) throw new HttpError(409, 'You already answered this question');
+      throw error;
+    }
+    await queueOutbox('QuizAnswered', { contestId: String(question.contestId), userId: user.sub });
+    res.json({ score, correct, streak: correct ? priorCorrect + 1 : 0 });
   }));
 
   app.get('/api/admin/audit', asyncRoute(async (req, res) => {

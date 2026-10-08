@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canTransition,
+  streakBonus,
   compareIcpc,
   compareStanding,
   firstSolveBonusPoints,
@@ -105,5 +106,11 @@ describe('rules', () => {
     expect(canTransition('running', 'cancelled')).toBe(true);
     expect(canTransition('published', 'cancelled')).toBe(false);
     expect(canTransition('cancelled', 'running')).toBe(false);
+  });
+
+  it('adds a capped streak bonus on top of a correct quiz answer', () => {
+    expect(streakBonus(1000, 0)).toBe(0);
+    expect(streakBonus(1000, 1)).toBe(100);
+    expect(streakBonus(1000, 9)).toBe(500);
   });
 });

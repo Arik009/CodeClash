@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, Clock, List, Lock, Trophy, UserPlus, Users } from 'lucide-react';
+import { ArrowLeft, Check, Clock, List, Lock, Trophy, UserPlus, Users, X } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
@@ -34,6 +34,20 @@ interface Contest {
 }
 interface Seat { seatId: string; status: string; position: number | null }
 interface MySubmission { id: string; problemId: string; language: string; status: string; verdict: string | null; submittedAt: string }
+interface QuizState {
+  serverNow: string;
+  question: {
+    id: string;
+    prompt: string;
+    options: string[];
+    windowSec: number;
+    opensAt: string;
+    basePoints: number;
+    closed: boolean;
+    correctIndex: number | null;
+  } | null;
+  answer: { choice: number; score: number } | null;
+}
 
 const ACTIVE_SEAT = ['reserved', 'modified', 'competing'];
 type Tab = 'problems' | 'standings' | 'mine';
@@ -48,6 +62,7 @@ export function ContestRoom({ me }: { me: string | null }) {
   const [seat, setSeat] = useState<Seat | null>(null);
   const [board, setBoard] = useState<BoardRow[]>([]);
   const [mine, setMine] = useState<MySubmission[]>([]);
+  const [quiz, setQuiz] = useState<QuizState | null>(null);
   const [language, setLanguage] = useLanguage();
   const [error, setError] = useState('');
   const now = useNow(1000) + skew;
@@ -59,19 +74,22 @@ export function ContestRoom({ me }: { me: string | null }) {
   const loadSeat = useCallback(() => (me ? api<Seat | null>(`/api/contests/${id}/seat`).then(setSeat).catch(() => {}) : Promise.resolve()), [id, me]);
   const loadMine = useCallback(() => (me ? api<MySubmission[]>(`/api/contests/${id}/submissions/mine`).then(setMine).catch(() => {}) : Promise.resolve()), [id, me]);
   const loadBoard = useCallback(() => api<BoardRow[]>(`/api/contests/${id}/leaderboard`).then(setBoard).catch(() => {}), [id]);
+  const loadQuiz = useCallback(() => (me ? api<QuizState>(`/api/contests/${id}/quiz/current`).then(setQuiz).catch(() => {}) : Promise.resolve()), [id, me]);
 
   useEffect(() => {
     void loadContest();
     void loadSeat();
     void loadMine();
     void loadBoard();
+    void loadQuiz();
     const socket = io();
     socket.on('connect', () => socket.emit('join', id));
     socket.on('leaderboard', (rows: BoardRow[]) => setBoard(rows));
+    socket.on('QuizOpened', () => { void loadQuiz(); toast('A quiz question just opened', 'info'); });
     socket.on('SeatChanged', () => { void loadSeat(); void loadContest(); });
     socket.on('ContestStatus', () => { void loadContest(); void loadBoard(); });
     return () => { socket.close(); };
-  }, [id, loadContest, loadSeat, loadMine, loadBoard]);
+  }, [id, loadContest, loadSeat, loadMine, loadBoard, loadQuiz]);
 
   function go(next: { tab?: Tab; p?: string }) {
     const merged = { tab, p: openLetter, ...next };
@@ -102,6 +120,18 @@ export function ContestRoom({ me }: { me: string | null }) {
     }
   }
 
+  async function answer(choice: number) {
+    if (!quiz?.question) return;
+    setError('');
+    try {
+      const result = await api<{ score: number; correct: boolean }>(`/api/quiz/${quiz.question.id}/answer`, { method: 'POST', body: JSON.stringify({ choice }) });
+      toast(result.correct ? `Correct · +${result.score}` : 'Answer locked in', result.correct ? 'ok' : 'info');
+      await loadQuiz();
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+
   if (!contest) {
     return <div className="page">{error ? <Alert>{error}</Alert> : <div className="skeleton" style={{ height: '8rem' }} />}</div>;
   }
@@ -120,6 +150,11 @@ export function ContestRoom({ me }: { me: string | null }) {
     return index >= 0 ? `${letter(index)}. ${contest.problems[index]!.title}` : '—';
   };
   const blocked = !me ? 'sign in to submit' : !live ? 'the contest is not running' : !hasSeat ? 'register for a seat to submit' : undefined;
+
+  const question = quiz?.question ?? null;
+  const quizLeft = question ? question.windowSec * 1000 - (now - new Date(question.opensAt).getTime()) : 0;
+  const quizOpen = question !== null && quizLeft > 0 && !question.closed;
+  const quizRecent = question !== null && quizLeft > -120_000;
 
   return (
     <div className="page wide">
@@ -160,6 +195,39 @@ export function ContestRoom({ me }: { me: string | null }) {
       </section>
 
       {error ? <Alert>{error}</Alert> : null}
+
+      {question && live && quizRecent ? (
+        <section className="quiz" aria-live="polite" aria-label="Quiz question">
+          <div className="quiz-head">
+            <span className="pill accent">quiz · {question.basePoints} pts</span>
+            <span className="clock" style={{ fontSize: '1.2rem' }}>{quizOpen ? formatLeft(quizLeft) : 'closed'}</span>
+          </div>
+          {quizOpen ? <div className="bar" style={{ marginTop: 'var(--space-2)' }}><span style={{ width: `${Math.max(0, (quizLeft / (question.windowSec * 1000)) * 100)}%` }} /></div> : null}
+          <p className="quiz-prompt">{question.prompt}</p>
+          <div className="options">
+            {question.options.map((option, index) => {
+              const picked = quiz?.answer?.choice === index;
+              const right = question.correctIndex === index;
+              const wrong = picked && question.correctIndex !== null && !right;
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  className={`option ${picked ? 'picked' : ''} ${right ? 'right' : ''} ${wrong ? 'wrong' : ''}`}
+                  disabled={!quizOpen || !!quiz?.answer || !hasSeat}
+                  onClick={() => answer(index)}
+                >
+                  <span className="key">{letter(index)}</span> <span>{option}</span>
+                  {right ? <Check size={15} className="ok" style={{ marginLeft: 'auto' }} /> : wrong ? <X size={15} className="bad" style={{ marginLeft: 'auto' }} /> : null}
+                </button>
+              );
+            })}
+          </div>
+          <p className="muted small" style={{ margin: '0.75rem 0 0' }}>
+            {quiz?.answer ? `Your answer is in · ${quiz.answer.score} points` : !hasSeat ? 'Register for a seat to answer.' : 'Faster correct answers score more.'}
+          </p>
+        </section>
+      ) : null}
 
       <nav className="tabs" role="tablist" aria-label="Contest">
         <button type="button" role="tab" aria-selected={tab === 'problems'} className={`tab ${tab === 'problems' ? 'on' : ''}`} onClick={() => go({ tab: 'problems', p: '' })}>
@@ -286,6 +354,7 @@ export function ContestRoom({ me }: { me: string | null }) {
 }
 
 function Standings({ contest, board, me }: { contest: Contest; board: BoardRow[]; me: string | null }) {
+  const showQuiz = contest.type !== 'coding';
   const problems = contest.problems;
   if (board.length === 0) return <Empty icon={<Trophy size={28} />} title="No scores yet">Rows appear after the first judged submission.</Empty>;
   return (
@@ -297,6 +366,7 @@ function Standings({ contest, board, me }: { contest: Contest; board: BoardRow[]
               <th className="c" style={{ width: '3rem' }}>#</th>
               <th>who</th>
               <th className="c">=</th>
+              {showQuiz ? <th className="c">quiz</th> : null}
               <th className="c">penalty</th>
               {problems.map((p, index) => <th key={p.problemId} className="c upper" title={p.title}>{letter(index)}</th>)}
             </tr>
@@ -307,6 +377,7 @@ function Standings({ contest, board, me }: { contest: Contest; board: BoardRow[]
                 <td className={`c rank ${index < 3 ? 'top' : ''}`}>{index + 1}</td>
                 <td><strong>{row.displayName}</strong>{row.userId === me ? <span className="muted small"> · you</span> : null}</td>
                 <td className="c"><strong>{row.solved}</strong></td>
+                {showQuiz ? <td className="c num">{row.quizPoints}</td> : null}
                 <td className="c num muted">{row.penalty}</td>
                 {problems.map((p) => <td key={p.problemId} className="c"><StandingCell cell={row.cells?.[p.problemId]} /></td>)}
               </tr>

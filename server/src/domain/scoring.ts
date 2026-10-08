@@ -1,6 +1,14 @@
 import { compareStanding, icpcRow, problemCells, type ProblemCell, type StandingRow, type Verdict } from '@codeclash/shared';
 import { type Db, ObjectId } from 'mongodb';
 
+async function quizTotal(db: Db, contestId: ObjectId, userId: ObjectId, before?: Date) {
+  const rows = await db.collection('quiz_answers').aggregate([
+    { $match: { contestId, userId, ...(before ? { receivedAt: { $lt: before } } : {}) } },
+    { $group: { _id: null, points: { $sum: '$score' } } },
+  ]).toArray();
+  return (rows[0]?.points as number) ?? 0;
+}
+
 /** Stores the standing row of one participant. */
 export async function recomputeStanding(db: Db, contestId: string, userId: string) {
   const contest = await db.collection('contests').findOne({ _id: new ObjectId(contestId) });
@@ -19,19 +27,21 @@ export async function recomputeStanding(db: Db, contestId: string, userId: strin
   const startsAt = contest.startsAt as Date;
   const endsAt = contest.endsAt as Date;
   const row = icpcRow(attempts, startsAt, endsAt);
+  const quizPoints = await quizTotal(db, contest._id, uid);
   await db.collection('standings').updateOne(
     { contestId: contest._id, userId: uid },
     {
       $set: {
         ...row,
         cells: problemCells(attempts, startsAt, endsAt),
+        quizPoints,
         contestId: contest._id,
         userId: uid,
       },
     },
     { upsert: true },
   );
-  return row;
+  return { ...row, quizPoints };
 }
 
 export interface BoardRow extends StandingRow {
@@ -114,7 +124,7 @@ export async function dispatchOutbox(
       problemId?: string;
       submittedAt?: Date;
     };
-    let rescore = false;
+    let rescore = row.type === 'QuizAnswered';
     if (row.type === 'VerdictCommitted' && payload.kind === 'contest' && payload.contestId && payload.userId && payload.submissionId) {
       rescore = true;
       const submission = await db.collection('submissions').findOne({ _id: new ObjectId(payload.submissionId) });

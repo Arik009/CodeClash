@@ -234,6 +234,38 @@ describe('contest lifecycle', () => {
     expect(board.body[0].cells[problemId]).toMatchObject({ solved: true, tries: 0 });
   });
 
+  it('runs the quiz: open, answer once, reveal, and draw from the bank', async () => {
+    const question = await api('post', `/api/contests/${contestId}/quiz`, organiser, {
+      prompt: '2 + 2?', options: ['3', '4'], correctIndex: 1, windowSec: 1,
+    });
+    expect(question.status).toBe(201);
+    const qid = question.body.id as string;
+    expect((await api('post', `/api/quiz/${qid}/answer`, neha.token, { choice: 1 })).status).toBe(409);
+    expect((await api('post', `/api/quiz/${qid}/open`, organiser)).status).toBe(200);
+    expect((await api('post', `/api/quiz/${qid}/open`, organiser)).status).toBe(409);
+
+    const current = await api('get', `/api/contests/${contestId}/quiz/current`, neha.token);
+    expect(current.body.question).toMatchObject({ id: qid, closed: false, correctIndex: null });
+    expect((await api('post', `/api/quiz/${qid}/answer`, neha.token, { choice: 5 })).status).toBe(400);
+    const answered = await api('post', `/api/quiz/${qid}/answer`, neha.token, { choice: 1 });
+    expect(answered.body.correct).toBe(true);
+    expect(answered.body.score).toBeGreaterThan(0);
+    expect((await api('post', `/api/quiz/${qid}/answer`, neha.token, { choice: 1 })).status).toBe(409);
+    expect((await api('post', `/api/quiz/${qid}/answer`, ravi.token, { choice: 1 })).status).toBe(403);
+    expect((await api('post', `/api/contests/${contestId}/quiz/next`, organiser)).status).toBe(409);
+
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const revealed = await api('get', `/api/contests/${contestId}/quiz/current`, neha.token);
+    expect(revealed.body.question).toMatchObject({ closed: true, correctIndex: 1 });
+    expect(revealed.body.answer.choice).toBe(1);
+
+    expect((await api('post', `/api/contests/${contestId}/quiz/next`, organiser)).status).toBe(404);
+    await db.collection('quiz_bank').insertOne({ prompt: 'Big-O of binary search?', options: ['n', 'log n'], correctIndex: 1 });
+    const drawn = await api('post', `/api/contests/${contestId}/quiz/next`, organiser);
+    expect(drawn.status).toBe(201);
+    expect(drawn.body.prompt).toBe('Big-O of binary search?');
+  });
+
   it('freezes, ends and publishes, then shows the editorial and returns the problem to the archive', async () => {
     for (const to of ['frozen', 'ended', 'published']) {
       expect((await api('post', `/api/contests/${contestId}/transition`, organiser, { to })).body.to).toBe(to);
@@ -241,6 +273,7 @@ describe('contest lifecycle', () => {
     const room = await api('get', `/api/contests/${contestId}`);
     expect(room.body.problems[0].editorial).toBe('Multiply by two.');
     expect((await api('get', `/api/problem-versions/${versionId}/public`)).status).toBe(200);
+    expect((await api('post', `/api/contests/${contestId}/quiz/next`, organiser)).status).toBe(409);
     expect((await api('get', `/api/contests/${new ObjectId()}`)).status).toBe(404);
   });
 
