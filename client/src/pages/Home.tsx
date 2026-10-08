@@ -113,6 +113,7 @@ export function Home({ signedIn }: { signedIn: boolean }) {
 
       <footer className="landing-foot muted small">
         <span>CodeClash · CS455 software engineering project</span>
+        <span>Archive problems from Codeforces via DeepMind CodeContests, CC BY 4.0</span>
       </footer>
     </div>
   );

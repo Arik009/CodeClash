@@ -1,12 +1,15 @@
-import { defaultLimits, seededRng, type SourceLanguage } from '@codeclash/shared';
+import { defaultLimits, seededRng, SOURCE_LANGUAGES, type SourceLanguage } from '@codeclash/shared';
 import 'dotenv/config';
 import { hash } from '@node-rs/argon2';
 import { Redis } from 'ioredis';
 import { MongoClient, ObjectId } from 'mongodb';
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import { CATALOG, QUIZ_BANK } from './catalog.js';
 import { MORE } from './catalog-more.js';
 import { ensureIndexes } from './db/indexes.js';
 import { applyRatings } from './domain/product.js';
+import { tidyStatement } from './import/codecontests.js';
 import { awardFirstSolve, recomputeStanding } from './domain/scoring.js';
 import {
   DEMO_PASSWORD, emailFor, initialRating, MORE_QUIZ, PARTICIPANTS, practiceDays, simulateContest, STAFF, STAFF_DOMAIN,
@@ -67,6 +70,14 @@ for (const member of STAFF) staff[member.role]!.push(await upsertPerson(member.n
 const people: Person[] = [];
 for (const name of PARTICIPANTS) people.push(await upsertPerson(name, 'participant', STUDENT_DOMAIN, initialRating(rng)));
 
+// ---------- problems ----------
+interface Imported {
+  title: string; statement: string; samples: string; tags: string[]; difficulty: 'easy' | 'medium' | 'hard'; rating: number;
+  limits: { timeMs: number; memoryMb: number }; inputSpec: string | null; tests: { input: string; output: string; hidden: boolean }[];
+  reference: { language: SourceLanguage; code: string };
+  wrongSolutions: { label: string; language: SourceLanguage; code: string; expected: string }[];
+  source: { platform: string; contestId: number; index: string; url: string; dataset: string; license: string };
+}
 
 interface Seeded {
   problemId: ObjectId;
@@ -78,10 +89,16 @@ interface Seeded {
 
 const CATALOG_RATING = { easy: 900, medium: 1300, hard: 1700 };
 
+function languageLimits({ timeMs, memoryMb }: { timeMs: number; memoryMb: number }) {
+  return Object.fromEntries(SOURCE_LANGUAGES.map((language) => [language, language === 'java'
+    ? { timeMs: Math.round(timeMs * 1.5), memoryMb: Math.max(memoryMb, 512) }
+    : { timeMs, memoryMb: ['javascript', 'go'].includes(language) ? Math.max(memoryMb, 128) : memoryMb }]));
+}
+
 async function upsertProblem(item: {
   title: string; statement: string; samples: string; editorial: string; tags: string[]; difficulty: string; rating?: number;
   limits: Record<string, { timeMs: number; memoryMb: number }>; subtasks: unknown[]; inputSpec: string | null;
-  tests: unknown[]; reference: Seeded['reference']; wrong: Seeded['wrong']; author: ObjectId;
+  tests: unknown[]; reference: Seeded['reference']; wrong: Seeded['wrong']; source?: Imported['source']; author: ObjectId;
 }): Promise<Seeded> {
   const problem = (await db.collection('problems').findOneAndUpdate(
     { title: item.title },
@@ -101,6 +118,7 @@ async function upsertProblem(item: {
     tags: item.tags,
     difficulty: item.difficulty,
     ...(item.rating ? { rating: item.rating } : {}),
+    ...(item.source ? { source: { ...item.source, name: `${item.source.platform} ${item.source.contestId}${item.source.index}` } } : {}),
     limits: item.limits,
     subtasks: item.subtasks,
     inputSpec: item.inputSpec,
@@ -147,6 +165,48 @@ for (const item of [...CATALOG, ...MORE]) {
   });
   (pool === 'warmup' ? warmupPool : pool === 'archive' ? libraryPool : practice).push(seeded);
 }
+
+const imported = (JSON.parse(gunzipSync(readFileSync(new URL('../data/codecontests.json.gz', import.meta.url))).toString()) as { problems: Imported[] }).problems;
+const importedSeeded = new Map<Imported, Seeded>();
+for (const item of imported) {
+  importedSeeded.set(item, await upsertProblem({
+    title: item.title,
+    statement: tidyStatement(item.statement),
+    samples: item.samples,
+    editorial: '',
+    tags: item.tags,
+    difficulty: item.difficulty,
+    rating: item.rating,
+    limits: languageLimits(item.limits),
+    subtasks: [],
+    inputSpec: item.inputSpec,
+    tests: item.tests,
+    reference: item.reference,
+    wrong: item.wrongSolutions.map((w) => ({ language: w.language, code: w.code, verdict: w.expected })),
+    source: item.source,
+    author: pick(setters)._id,
+  }));
+}
+
+// Codeforces rounds with three or more problems become past contests; two more are mixed from the rest.
+const byRound = new Map<number, Imported[]>();
+for (const item of imported) byRound.set(item.source.contestId, [...(byRound.get(item.source.contestId) ?? []), item]);
+const used = new Set<Imported>();
+const rounds: Imported[][] = [...byRound.values()].filter((list) => list.length >= 3).slice(0, 5);
+for (const round of rounds) round.forEach((item) => used.add(item));
+function mixed(shape: ('easy' | 'medium' | 'hard')[]) {
+  const set: Imported[] = [];
+  for (const difficulty of shape) {
+    const item = imported.find((p) => !used.has(p) && p.difficulty === difficulty);
+    if (item) { used.add(item); set.push(item); }
+  }
+  return set.sort((a, b) => a.rating - b.rating);
+}
+rounds.push(mixed(['easy', 'medium', 'medium', 'hard']), mixed(['easy', 'easy', 'medium', 'hard']));
+const autumn = mixed(['easy', 'medium', 'medium', 'hard', 'hard']);
+const winter = mixed(['easy', 'medium', 'medium', 'hard']);
+for (const item of imported) if (!used.has(item)) practice.push(importedSeeded.get(item)!);
+const toSeeded = (list: Imported[]) => list.map((item) => importedSeeded.get(item)!);
 
 // ---------- contests ----------
 const organisers = staff.organiser!;
@@ -232,7 +292,14 @@ async function playContest(contest: { _id: ObjectId; startsAt: Date }, players: 
   return rows.length;
 }
 
-const past: { title: string; startsAt: number; players: Person[]; problems: Seeded[]; minutes: number }[] = [];
+const PAST = ['Monsoon Starter', 'CodeClash Round 1', 'CodeClash Round 2', 'Midsummer Sprint', 'CodeClash Round 3', 'Campus Qualifier', 'CodeClash Round 4'];
+const past = rounds.map((round, index) => ({
+  title: PAST[index] ?? `CodeClash Round ${index}`,
+  startsAt: hourOf(now - (110 - index * 14) * DAY),
+  players: sample(people, 26 + Math.floor(rng.next() * 22)),
+  problems: toSeeded(round),
+  minutes: 120,
+}));
 past.push({ title: 'Library cup', startsAt: hourOf(now - 14 * DAY), players: sample(people, 40), problems: libraryPool, minutes: 240 });
 
 let contestSubmissions = 0;
@@ -268,6 +335,12 @@ try {
 } catch {
   console.log('redis unreachable: the server re-queues the live submissions within two minutes');
 }
+
+const autumnStart = hourOf(now + 5 * DAY);
+const autumnOpen = await createContest({ title: 'Autumn Open', status: 'registration_open', startsAt: autumnStart, minutes: 150, problems: toSeeded(autumn) });
+await db.collection('contests').updateOne({ _id: autumnOpen._id }, { $set: { registrationOpensAt: new Date(now - 2 * DAY) } });
+await seat(autumnOpen._id, sample(people, 40), 'reserved', now);
+await createContest({ title: 'Winter Invitational', status: 'draft', startsAt: hourOf(now + 27 * DAY), minutes: 180, problems: toSeeded(winter) });
 
 // ---------- practice history: streaks and the activity heatmap ----------
 const today = Math.floor(now / DAY) * DAY;
@@ -305,10 +378,10 @@ for (const question of [...QUIZ_BANK, ...MORE_QUIZ]) {
   );
 }
 
-const visible = practice.length + libraryPool.length;
-console.log(`problems: ${CATALOG.length + MORE.length} catalog (${visible} in the archive)`);
+const visible = practice.length + libraryPool.length + rounds.reduce((n, r) => n + r.length, 0);
+console.log(`problems: ${CATALOG.length + MORE.length} catalog + ${imported.length} from CodeContests (${visible} in the archive)`);
 console.log(`users: ${people.length} participants, ${STAFF.length} staff, admin ${admin.email}`);
-console.log(`contests: ${past.length} published, Warmup round live`);
+console.log(`contests: ${past.length} published, Warmup round live, Autumn Open registering, Winter Invitational draft`);
 console.log(`submissions: ${contestSubmissions} in contests, ${submissions.length} practice, ${live.length} sent to the judge`);
 console.log(`quiz bank: ${QUIZ_BANK.length + MORE_QUIZ.length} questions`);
 console.log(`every demo account uses the password "${DEMO_PASSWORD}"`);

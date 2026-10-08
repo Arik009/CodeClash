@@ -451,6 +451,7 @@ export function createApp(deps: AppDeps) {
       reference: latest?.reference ?? null,
       wrongSolutions: latest?.wrongSolutions ?? [],
       inputSpec: latest?.inputSpec ?? '',
+      source: latest?.source ?? null,
       status: 'draft',
       report: [],
     });
@@ -477,6 +478,7 @@ export function createApp(deps: AppDeps) {
       reference: version.reference ?? null,
       wrongSolutions: version.wrongSolutions ?? [],
       inputSpec: version.inputSpec ?? '',
+      source: version.source ?? null,
       status: version.status,
       report: version.report ?? [],
     });
@@ -635,6 +637,7 @@ export function createApp(deps: AppDeps) {
       limits: version.limits ?? null,
       subtasks: ((version.subtasks as { name: string; points: number }[]) ?? []).map((subtask) => ({ name: subtask.name, points: subtask.points })),
       editorial: version.editorial ?? '',
+      source: version.source ?? null,
     });
   }));
 

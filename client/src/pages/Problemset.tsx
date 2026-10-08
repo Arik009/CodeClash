@@ -164,6 +164,9 @@ export function Problemset() {
           <Box title="how scoring works">
             <p className="muted small" style={{ margin: 0 }}>Run samples checks the visible examples and records nothing. Submit judges the hidden tests. A problem with subtasks keeps the points of every group you fully solve.</p>
           </Box>
+          <Box title="sources">
+            <p className="muted small" style={{ margin: 0 }}>Problems marked Codeforces come from the DeepMind CodeContests dataset (CC BY 4.0). Each was re-verified in our sandbox before import.</p>
+          </Box>
         </aside>
       </div>
     </div>

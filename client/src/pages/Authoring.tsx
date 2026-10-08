@@ -24,6 +24,7 @@ interface Version {
   reference: { language: Language; code: string } | null;
   wrongSolutions: Solution[];
   inputSpec: string;
+  source: { name: string; url?: string; license?: string } | null;
   status: string;
   report: string[];
 }

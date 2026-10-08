@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
-import { CodePanel, ProblemView, type Limits } from '../problem';
+import { CodePanel, ProblemView, type Limits, type ProblemSource } from '../problem';
 import { Alert, errorText, useLanguage } from '../ui';
 
 interface PublicProblem {
-  problemId: string; title: string; statement: string; samples: string; editorial: string; tags?: string[]; limits?: Limits;
+  problemId: string; title: string; statement: string; samples: string; editorial: string; tags?: string[]; limits?: Limits; source?: ProblemSource | null;
 }
 
 export function Practice({ signedIn }: { signedIn: boolean }) {

@@ -14,6 +14,24 @@ export interface ProblemData {
   editorial?: string | null;
   limits?: Limits;
   tags?: string[];
+  source?: ProblemSource | null;
+}
+
+export interface ProblemSource { name?: string; platform?: string; contestId?: number; index?: string; url?: string; dataset?: string; license?: string }
+
+export function sourceName(source: ProblemSource) {
+  return source.name ?? `${source.platform ?? ''} ${source.contestId ?? ''}${source.index ?? ''}`.trim();
+}
+
+export function SourceLine({ source }: { source: ProblemSource }) {
+  const name = sourceName(source);
+  return (
+    <p className="source-line">
+      Source: {source.url ? <a href={source.url} target="_blank" rel="noreferrer noopener">{name}</a> : name}
+      {source.dataset ? `, via ${source.dataset}` : ''}
+      {source.license ? ` (${source.license})` : ''}
+    </p>
+  );
 }
 
 const HEADINGS = /^(input|output|note|notes|constraints|examples?|explanation|interaction|scoring)\s*:?$/i;
@@ -120,6 +138,7 @@ export function ProblemView({ problem, index, language, editorial = 'toggle' }: 
         <h2>{index !== undefined ? `${letter(index)}. ` : ''}{problem.title}</h2>
         <LimitsLine limits={problem.limits} language={language} />
         {tags.length ? <div className="row tags-line">{tags.map((tag, tagIndex) => <span key={`${tag}-${tagIndex}`} className="chip">{tag}</span>)}</div> : null}
+        {problem.source && sourceName(problem.source) ? <SourceLine source={problem.source} /> : null}
       </header>
       <Statement text={problem.statement} />
       {problem.samples ? <Samples text={problem.samples} /> : null}

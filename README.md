@@ -54,14 +54,21 @@ docker compose down
 
 The seed is deterministic (fixed random seed) and can be run again at any time. It replaces only what it created earlier, which is marked `seeded: true`.
 
-- **26 problems** written for CodeClash, with formal statements, input specs and large tests. Each has a reference solution and a known wrong solution.
+- **146 problems.** 26 written for CodeClash, with formal statements, input specs and large tests, and 120 real Codeforces problems imported from DeepMind CodeContests (see below). Each has a reference solution and at least one known wrong solution.
 - **65 people.** 60 participants with ratings and practice history, 3 setters and 2 organisers.
-- **Library cup**, a past contest, published and rated, so its standings, first solves and rating changes are real outputs of the scoring code.
+- **Eight past contests**, all published and rated in date order, so the standings, first solves and rating changes are real outputs of the scoring code.
 - **Warmup round**, live now. Its first 40 minutes are simulated; eight fresh submissions go through the real judge when you seed.
+- **Autumn Open**, open for registration, starting in five days. **Winter Invitational** is a draft.
 - **About 6,000 practice submissions** over the last 16 weeks, which fill the profile heatmap. About a quarter of participants are on a live solve streak.
 - **60 quiz questions.**
 
 Contest editorials stay hidden until that contest has ended or been published. Problems that belong to a contest show up in the problemset only once that contest is published.
+
+### Imported problems
+
+`server/data/codecontests.json.gz` holds 120 problems from the [DeepMind CodeContests dataset](https://github.com/google-deepmind/code_contests) (CC BY 4.0), which in turn come from Codeforces. Each problem page shows its source, for example "Source: Codeforces 1582F1, via DeepMind CodeContests (CC BY 4.0)". `server/data/CODECONTESTS-ATTRIBUTION.md` lists what was changed and how problems were chosen.
+
+`scripts/import-codecontests.mjs` rebuilds that file from the dataset's parquet files. It keeps only problems where two of the dataset's correct solutions agree on every test in our own sandbox, and where the dataset's wrong solutions actually fail.
 
 A new account has to confirm its email before it can take a seat or submit. In local development the confirmation token is shown on the sign-up screen. There is no mail server.
 
