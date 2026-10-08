@@ -37,3 +37,28 @@ docker compose down
 ```
 
 `docker compose down -v` also deletes the database volume.
+
+## Configuration
+
+You do not need a `.env` file for the local demo. The API uses the same defaults as `.env.example`.
+
+The API reads `.env` from its own folder (`server/`), not from the repository root. To change a value, copy the example there:
+
+```bash
+# macOS or Linux
+cp .env.example server/.env
+```
+
+```powershell
+# Windows PowerShell
+Copy-Item .env.example server\.env
+```
+
+| Variable | What it does |
+| --- | --- |
+| `MONGO_URL` | Contest database. Default matches the Docker user `app` / `codeclash` |
+| `REDIS_URL` | Judge queue. Default `redis://127.0.0.1:6379` |
+| `PORT` | API port. Default `4000` |
+| `CLIENT_ORIGIN` | Browser origin allowed by CORS. Default `http://localhost:5173` |
+
+Do not commit `.env`. It is listed in `.gitignore`.
