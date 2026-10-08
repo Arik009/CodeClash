@@ -71,7 +71,7 @@ A new account has to confirm its email before it can take a seat or submit. In l
 - **Problemset** is practice. Run samples checks the visible examples and stores nothing. Submit judges the hidden tests.
 - **Authoring** (setter or admin) drafts a problem. **New problem** opens in the pane on the right.
 - **Control** (organiser or admin) creates a contest, moves it through registration, running, freeze, end, and publish, opens quiz questions, and can cancel or rejudge.
-- **Admin** is people and the audit log.
+- **Admin** is people, workers, and the audit log.
 
 In the editor, Ctrl+Enter submits. The palette icon in the header changes the theme. The choice is saved in this browser.
 

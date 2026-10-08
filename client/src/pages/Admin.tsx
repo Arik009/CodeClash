@@ -1,26 +1,31 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Plus } from 'lucide-react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api } from '../api';
-import { Alert, Empty, errorText, toast } from '../ui';
+import { Alert, Empty, errorText, StatusPill, toast } from '../ui';
 
+interface Worker { id: string; name: string; slots: number; status: string }
 interface Audit { _id: string; action: string; decision: string; actor: string; actorType?: string; target: string; at: string }
 interface User { id: string; email: string; displayName: string; role: string }
-type Tab = 'people' | 'audit';
+type Tab = 'people' | 'workers' | 'audit';
 
 const ROLES = ['participant', 'setter', 'organiser', 'admin'];
 const DECISION_TONE: Record<string, string> = { allow: 'ok', published: 'ok', deny: 'bad', blocked: 'bad', hold: 'warn' };
 
 export function Admin({ me }: { me: string }) {
   const [tab, setTab] = useState<Tab>('people');
+  const [workers, setWorkers] = useState<Worker[]>([]);
   const [audit, setAudit] = useState<Audit[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [name, setName] = useState('local-1');
   const [error, setError] = useState('');
 
+  const loadWorkers = useCallback(() => api<Worker[]>('/api/admin/workers').then(setWorkers), []);
   const loadAudit = useCallback(() => api<Audit[]>('/api/admin/audit').then(setAudit), []);
   const loadUsers = useCallback(() => api<User[]>('/api/admin/users').then(setUsers), []);
 
   useEffect(() => {
-    Promise.all([loadAudit(), loadUsers()]).catch((e) => setError(errorText(e)));
-  }, [loadAudit, loadUsers]);
+    Promise.all([loadWorkers(), loadAudit(), loadUsers()]).catch((e) => setError(errorText(e)));
+  }, [loadWorkers, loadAudit, loadUsers]);
 
   async function run(action: () => Promise<unknown>, done?: string) {
     setError('');
@@ -32,6 +37,22 @@ export function Admin({ me }: { me: string }) {
     }
   }
 
+  async function register(event: FormEvent) {
+    event.preventDefault();
+    await run(async () => {
+      await api('/api/admin/workers', { method: 'POST', body: JSON.stringify({ name, slots: 4 }) });
+      await Promise.all([loadWorkers(), loadAudit()]);
+    }, `Worker ${name} registered`);
+  }
+
+  async function workerAction(worker: Worker, action: 'drain' | 'evict') {
+    if (action === 'evict' && !window.confirm(`Evict ${worker.name}? Its unfinished work moves to another worker.`)) return;
+    await run(async () => {
+      await api(`/api/admin/workers/${worker.id}/${action}`, { method: 'POST' });
+      await Promise.all([loadWorkers(), loadAudit()]);
+    }, `${worker.name}: ${action === 'drain' ? 'draining' : 'evicted'}`);
+  }
+
   async function setRole(user: User, role: string) {
     await run(async () => {
       await api(`/api/admin/users/${user.id}/role`, { method: 'PUT', body: JSON.stringify({ role }) });
@@ -39,20 +60,24 @@ export function Admin({ me }: { me: string }) {
     }, `${user.displayName} is now ${role}`);
   }
 
+  const activeSlots = workers.filter((w) => w.status === 'active').reduce((sum, w) => sum + w.slots, 0);
+
   return (
     <div className="page">
-      <div className="page-head"><div><h1>Admin</h1><p>People and roles, and the append-only audit log.</p></div></div>
+      <div className="page-head"><div><h1>Admin</h1><p>People and roles, judge capacity, and the append-only audit log.</p></div></div>
       {error ? <Alert>{error}</Alert> : null}
 
       <div className="stats">
         <div className="box stat"><b>{users.length}</b><span>people shown</span></div>
+        <div className="box stat"><b className="ok">{workers.filter((w) => w.status === 'active').length}</b><span>active workers</span></div>
+        <div className="box stat"><b>{activeSlots}</b><span>judge slots</span></div>
         <div className="box stat"><b>{audit.length}</b><span>recent audit rows</span></div>
       </div>
 
       <nav className="tabs" role="tablist" aria-label="Admin">
-        {(['people', 'audit'] as const).map((key) => (
+        {(['people', 'workers', 'audit'] as const).map((key) => (
           <button key={key} type="button" role="tab" aria-selected={tab === key} className={`tab ${tab === key ? 'on' : ''}`} onClick={() => setTab(key)}>
-            {key === 'audit' ? 'audit log' : 'people'}
+            {key === 'workers' ? 'judge workers' : key === 'audit' ? 'audit log' : 'people'}
           </button>
         ))}
       </nav>
@@ -79,6 +104,38 @@ export function Admin({ me }: { me: string }) {
               </table>
             )}
           </div>
+        </>
+      ) : null}
+
+      {tab === 'workers' ? (
+        <>
+          <form onSubmit={register} className="row" style={{ marginBottom: 'var(--space-3)' }}>
+            <input aria-label="Worker name" value={name} onChange={(e) => setName(e.target.value)} style={{ maxWidth: '18rem' }} />
+            <button className="btn primary" type="submit"><Plus size={14} /> register worker</button>
+          </form>
+          <div className="table-wrap">
+            {workers.length === 0 ? <Empty title="No workers have checked in" /> : (
+              <table>
+                <thead><tr><th>name</th><th>slots</th><th>status</th><th className="r">actions</th></tr></thead>
+                <tbody>
+                  {workers.map((w) => (
+                    <tr key={w.id}>
+                      <td><strong>{w.name}</strong></td>
+                      <td className="num">{w.slots}</td>
+                      <td><StatusPill status={w.status} /></td>
+                      <td className="r">
+                        <div className="row" style={{ justifyContent: 'flex-end' }}>
+                          <button className="btn sm" type="button" disabled={w.status !== 'active'} onClick={() => workerAction(w, 'drain')}>drain</button>
+                          <button className="btn danger sm" type="button" disabled={w.status === 'evicted'} onClick={() => workerAction(w, 'evict')}>evict</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <p className="muted small" style={{ marginTop: 'var(--space-3)' }}>Drain lets running work finish and takes no new jobs. Evict hands unfinished work to another worker.</p>
         </>
       ) : null}
 

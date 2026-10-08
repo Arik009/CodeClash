@@ -28,6 +28,12 @@ for (const stream of ['judge:contest', 'judge:practice']) {
   }
 }
 
+await db.collection('workers').updateOne(
+  { name: workerId },
+  { $set: { name: workerId, slots, status: 'active', lastSeen: new Date(), pid: process.pid, host: hostname() } },
+  { upsert: true },
+);
+
 type Entry = [string, string[]];
 
 function submissionIdOf(fields: string[]) {
@@ -35,8 +41,15 @@ function submissionIdOf(fields: string[]) {
   return undefined;
 }
 
+async function workerStatus() {
+  const worker = await db.collection('workers').findOne({ name: workerId });
+  return (worker?.status as string | undefined) ?? 'active';
+}
+
 /** Entries left unacked here are picked up by another worker through XAUTOCLAIM. */
 async function handle(stream: string, id: string, submissionId: string) {
+  const status = await workerStatus();
+  if (status === 'draining' || status === 'evicted') return;
   const token = randomBytes(16).toString('hex');
   const claimed = await db.collection('submissions').findOneAndUpdate(
     { _id: new ObjectId(submissionId), status: { $in: ['queued', 'claimed', 'running'] } },
@@ -105,6 +118,12 @@ async function slotLoop(index: number) {
   const conn = new Redis(redisUrl);
   const consumer = `${workerId}#${index}`;
   for (;;) {
+    const status = await workerStatus();
+    if (status === 'evicted') break;
+    if (status === 'draining') {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      continue;
+    }
     const streams = await streamsToRead();
     const reply = await conn.xreadgroup(
       'GROUP', group, consumer, 'COUNT', 1, 'BLOCK', 2000,
@@ -125,10 +144,22 @@ async function slotLoop(index: number) {
       }
     }
   }
+  conn.disconnect();
 }
+
+const heartbeat = setInterval(() => {
+  void (async () => {
+    await db.collection('workers').updateOne({ name: workerId }, { $set: { lastSeen: new Date() } });
+    await db.collection('workers').updateMany(
+      { name: { $ne: workerId }, status: 'active', lastSeen: { $lt: new Date(Date.now() - 90_000) } },
+      { $set: { status: 'stale' } },
+    );
+  })().catch((error) => console.error('heartbeat', error));
+}, 5000);
 
 Promise.all(Array.from({ length: slots }, (_, index) => slotLoop(index)))
   .then(async () => {
+    clearInterval(heartbeat);
     redis.disconnect();
     await mongo.close();
   })

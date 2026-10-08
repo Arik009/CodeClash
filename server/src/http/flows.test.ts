@@ -50,6 +50,7 @@ async function until<T>(read: () => Promise<T>, done: (value: T) => boolean) {
 }
 
 let admin = '';
+let adminId = '';
 let setter = '';
 let organiser = '';
 let neha = { token: '', id: '' };
@@ -79,13 +80,14 @@ beforeAll(async () => {
   await client.connect();
   db = client.db('codeclash-flows');
   await ensureIndexes(db);
-  await db.collection('users').insertOne({
+  const inserted = await db.collection('users').insertOne({
     email: 'admin@codeclash.local',
     passwordHash: await hash('codeclash'),
     displayName: 'Admin',
     role: 'admin',
     createdAt: new Date(),
   });
+  adminId = String(inserted.insertedId);
   app = createApp({ db, redis, runCase });
   admin = (await api('post', '/api/auth/login', undefined, { email: 'admin@codeclash.local', password: 'codeclash' })).body.access;
   setter = await promote('setter@example.com', 'setter');
@@ -345,5 +347,19 @@ describe('accounts and administration', () => {
     expect((await api('post', '/api/auth/logout', undefined, { refresh: session.refresh })).status).toBe(204);
     expect((await api('post', '/api/auth/refresh', undefined, { refresh: session.refresh })).status).toBe(401);
     expect((await api('get', '/health')).body).toEqual({ ok: true, mongo: true, redis: true });
+  });
+
+  it('registers, drains and evicts workers and audits each step', async () => {
+    const worker = await api('post', '/api/admin/workers', admin, { name: 'judge-2', slots: 2 });
+    await api('post', `/api/admin/workers/${worker.body.id}/drain`, admin);
+    const workers = await api('get', '/api/admin/workers', admin);
+    expect(workers.body).toContainEqual(expect.objectContaining({ name: 'judge-2', status: 'draining' }));
+    expect((await api('post', `/api/admin/workers/${worker.body.id}/evict`, admin)).body.status).toBe('evicted');
+
+    const audit = await api('get', '/api/admin/audit', admin);
+    expect(audit.body.map((row: { action: string }) => row.action)).toEqual(expect.arrayContaining(['worker.register', 'worker.drain', 'worker.evict']));
+    expect((await api('get', '/api/admin/users', admin)).body.length).toBeGreaterThan(3);
+    expect((await api('put', `/api/admin/users/${adminId}/role`, admin, { role: 'participant' })).status).toBe(409);
+    expect((await api('put', `/api/admin/users/${new ObjectId()}/role`, admin, { role: 'setter' })).status).toBe(404);
   });
 });

@@ -858,6 +858,34 @@ export function createApp(deps: AppDeps) {
     res.json({ role: body.role });
   }));
 
+  app.post('/api/admin/workers', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['admin']);
+    const body = z.object({ name: z.string(), slots: z.number().int().positive() }).parse(req.body);
+    const inserted = await db.collection('workers').insertOne({ ...body, status: 'active', lastSeen: new Date() });
+    await audit(db, user.sub, 'worker.register', String(inserted.insertedId), 'allow');
+    res.status(201).json({ id: String(inserted.insertedId) });
+  }));
+
+  app.post('/api/admin/workers/:id/drain', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['admin']);
+    await db.collection('workers').updateOne({ _id: new ObjectId(req.params.id) }, { $set: { status: 'draining' } });
+    await audit(db, user.sub, 'worker.drain', req.params.id, 'allow');
+    res.json({ status: 'draining' });
+  }));
+
+  app.post('/api/admin/workers/:id/evict', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['admin']);
+    await db.collection('workers').updateOne({ _id: new ObjectId(req.params.id) }, { $set: { status: 'evicted' } });
+    await audit(db, user.sub, 'worker.evict', req.params.id, 'allow');
+    res.json({ status: 'evicted' });
+  }));
+
+  app.get('/api/admin/workers', asyncRoute(async (req, res) => {
+    requireRole(req, ['admin']);
+    const rows = await db.collection('workers').find({}).toArray();
+    res.json(rows.map((w) => ({ id: String(w._id), name: w.name, slots: w.slots, status: w.status })));
+  }));
+
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: error.issues.map((i) => i.message).join('; ') });

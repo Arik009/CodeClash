@@ -63,12 +63,12 @@ describe('authz', () => {
       email: 'admin@codeclash.local',
       password: 'codeclash',
     });
-    const changed = await request(app)
-      .put(`/api/admin/users/${registered.body.user.id}/role`)
+    const created = await request(app)
+      .post('/api/admin/workers')
       .set('authorization', `Bearer ${admin.body.access}`)
-      .send({ role: 'participant' });
-    expect(changed.status).toBe(200);
-    const audit = await db.collection('audit').find({ action: 'user.role' }).toArray();
+      .send({ name: 'w1', slots: 4 });
+    expect(created.status).toBe(201);
+    const audit = await db.collection('audit').find({ action: 'worker.register' }).toArray();
     expect(audit.length).toBeGreaterThan(0);
 
     const wrong = await request(app).post('/api/auth/login').send({
