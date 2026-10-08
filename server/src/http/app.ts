@@ -1,9 +1,10 @@
-import { ROLES, SOURCE_LANGUAGES, type Role } from '@codeclash/shared';
+import { ROLES, SOURCE_LANGUAGES, type ContestStatus, type Role } from '@codeclash/shared';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { BSON, type Db, ObjectId } from 'mongodb';
 import { z } from 'zod';
 import { auditCollection } from '../db/audit.js';
+import { transitionContest } from '../domain/contests.js';
 import { HttpError } from '../domain/errors.js';
 import { enqueueSubmission, latestPublished, publishedVersions } from '../domain/judging.js';
 import { type RunCase } from '../domain/problems.js';
@@ -14,6 +15,7 @@ export interface AppDeps {
   db: Db;
   redis: {
     xadd: (stream: string, id: string, ...fields: string[]) => Promise<unknown>;
+    publish: (channel: string, message: string) => Promise<unknown>;
     incr: (key: string) => Promise<number>;
     expire: (key: string, seconds: number) => Promise<unknown>;
     get: (key: string) => Promise<string | null>;
@@ -205,6 +207,14 @@ export function createApp(deps: AppDeps) {
       createdBy: new ObjectId(user.sub),
     });
     res.status(201).json({ id: String(inserted.insertedId) });
+  }));
+
+  app.post('/api/contests/:id/transition', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['organiser', 'admin']);
+    const body = z.object({ to: z.enum(['registration_open', 'running', 'frozen', 'ended', 'published', 'cancelled']) }).parse(req.body);
+    const result = await transitionContest(db, req.params.id, body.to as ContestStatus, user.sub);
+    if (result.to === 'running') await redis.publish('contest:running', '1');
+    res.json(result);
   }));
 
   app.get('/api/contests/:id', asyncRoute(async (req, res) => {

@@ -1,4 +1,4 @@
-import { Plus, Search } from 'lucide-react';
+import { ArrowRight, Plus, Search } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
@@ -6,6 +6,14 @@ import { Alert, Box, Empty, errorText, formatWhen, StatusPill, toast } from '../
 
 interface Contest { id: string; title: string; status: string; type: string; reserved: number; capacity: number; startsAt: string }
 interface CatalogItem { problemId: string; title: string; tags: string[] }
+
+const NEXT: Record<string, { to: string; label: string } | undefined> = {
+  draft: { to: 'registration_open', label: 'open registration' },
+  registration_open: { to: 'running', label: 'start' },
+  running: { to: 'frozen', label: 'freeze board' },
+  frozen: { to: 'ended', label: 'end' },
+  ended: { to: 'published', label: 'publish results' },
+};
 
 function localInput(date: Date) {
   const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -60,7 +68,7 @@ export function Control() {
     const freeze = new Date(end.getTime() - freezeBefore * 60000);
     setBusy(true);
     try {
-      await api('/api/contests', {
+      const result = await api<{ id: string }>('/api/contests', {
         method: 'POST',
         body: JSON.stringify({
           title, type, capacity,
@@ -70,7 +78,9 @@ export function Control() {
           problemIds: type === 'quiz' ? [] : [...picked],
         }),
       });
-      toast(`“${title}” is saved as a draft`, 'ok');
+      await api(`/api/contests/${result.id}/transition`, { method: 'POST', body: JSON.stringify({ to: 'registration_open' }) });
+      if (startNow) await api(`/api/contests/${result.id}/transition`, { method: 'POST', body: JSON.stringify({ to: 'running' }) });
+      toast(startNow ? `“${title}” is live` : 'Registration is open. The contest starts on schedule.', 'ok');
       await reload();
     } catch (err) {
       setError(errorText(err));
@@ -79,12 +89,29 @@ export function Control() {
     }
   }
 
+  async function move(contest: Contest, to: string, label: string) {
+    if (!window.confirm(`${label} for “${contest.title}”? This cannot be undone.`)) return;
+    setError('');
+    try {
+      await api(`/api/contests/${contest.id}/transition`, { method: 'POST', body: JSON.stringify({ to }) });
+      toast(`${contest.title}: ${label}`, 'ok');
+      await reload();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  async function cancel(contest: Contest) {
+    if (!window.confirm(`Cancel “${contest.title}”? Every seat is released.`)) return;
+    await move(contest, 'cancelled', 'cancel');
+  }
+
   const shownCatalog = catalog.filter((item) => `${item.title} ${item.tags.join(' ')}`.toLowerCase().includes(search.toLowerCase()));
   const liveCount = contests.filter((c) => c.status === 'running' || c.status === 'frozen').length;
 
   return (
     <div className="page">
-      <div className="page-head"><div><h1>Control</h1><p>Create contests and pick their problems.</p></div></div>
+      <div className="page-head"><div><h1>Control</h1><p>Run the contest lifecycle.</p></div></div>
       {error ? <Alert>{error}</Alert> : null}
 
       <div className="stats">
@@ -100,15 +127,22 @@ export function Control() {
             {contests.length === 0 ? <Empty title="No contests yet">Create one below.</Empty> : (
               <div style={{ overflowX: 'auto' }}>
                 <table>
-                  <thead><tr><th>title</th><th>start</th><th>seats</th><th>status</th></tr></thead>
+                  <thead><tr><th>title</th><th>start</th><th>seats</th><th>status</th><th className="r">next step</th></tr></thead>
                   <tbody>
                     {contests.map((c) => {
+                      const next = NEXT[c.status];
                       return (
                         <tr key={c.id}>
                           <td><Link className="row-link" to={`/arena/${c.id}`}>{c.title}</Link><div className="muted small">{c.type}</div></td>
                           <td className="nowrap small">{formatWhen(c.startsAt)}</td>
                           <td className="num">{c.reserved}/{c.capacity}</td>
                           <td><StatusPill status={c.status} /></td>
+                          <td className="r">
+                            <span className="row" style={{ justifyContent: 'flex-end' }}>
+                              {next ? <button className="btn sm" type="button" onClick={() => move(c, next.to, next.label)}>{next.label} <ArrowRight size={13} /></button> : <span className="muted small">{c.status === 'cancelled' ? 'cancelled' : 'done'}</span>}
+                              {c.status !== 'published' && c.status !== 'cancelled' ? <button className="btn danger sm" type="button" onClick={() => cancel(c)}>cancel</button> : null}
+                            </span>
+                          </td>
                         </tr>
                       );
                     })}
@@ -170,10 +204,23 @@ export function Control() {
                   </div>
                 </>
               ) : null}
-              <button className="btn primary" type="submit" disabled={busy} style={{ marginTop: 'var(--space-4)' }}><Plus size={14} /> {busy ? 'creating…' : 'create draft'}</button>
+              <button className="btn primary" type="submit" disabled={busy} style={{ marginTop: 'var(--space-4)' }}><Plus size={14} /> {busy ? 'creating…' : startNow ? 'create and start' : 'create and open registration'}</button>
             </form>
           </Box>
         </div>
+
+        <aside className="side">
+          <Box title="lifecycle">
+            <ol className="muted small" style={{ margin: 0, paddingLeft: '1.1rem', lineHeight: 1.9 }}>
+              <li>draft → open registration</li>
+              <li>start: seats become competing</li>
+              <li>freeze: the public board stops moving</li>
+              <li>end: submissions close</li>
+              <li>publish: final board, ratings, editorials, practice</li>
+              <li>cancel: seats are released, from any step before publish</li>
+            </ol>
+          </Box>
+        </aside>
       </div>
     </div>
   );

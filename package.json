@@ -12,8 +12,8 @@
   "scripts": {
     "predev": "npm run build -w packages/shared && npm run build -w judge",
     "dev": "concurrently -n server,judge,client -c black,black,black \"npm run dev -w server\" \"npm run dev -w judge\" \"npm run dev -w client\"",
-    "test": "npm run build -w packages/shared && npm run build -w judge && npm run test -w judge && npm run test -w server",
-    "test:coverage": "npm run test:coverage -w server && npm run test:coverage -w judge",
+    "test": "npm run build -w packages/shared && npm run build -w judge && npm run test -w packages/shared && npm run test -w judge && npm run test -w server",
+    "test:coverage": "npm run test:coverage -w packages/shared && npm run test:coverage -w server && npm run test:coverage -w judge",
     "seed": "npm run seed -w server",
     "lint": "eslint .",
     "build": "npm run build -w packages/shared && npm run build -w judge && npm run build -w server && npm run build -w client",

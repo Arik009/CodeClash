@@ -5,6 +5,7 @@ import { MongoClient } from 'mongodb';
 import pino from 'pino';
 import { setAuditDb } from './db/audit.js';
 import { ensureIndexes } from './db/indexes.js';
+import { tickContests } from './domain/contests.js';
 import { type RunCase } from './domain/problems.js';
 import { createApp } from './http/app.js';
 
@@ -27,6 +28,7 @@ const app = createApp({
   db,
   redis: {
     xadd: (stream, id, ...fields) => redis.xadd(stream, id, ...fields),
+    publish: (channel, message) => redis.publish(channel, message),
     incr: (key) => redis.incr(key),
     expire: (key, seconds) => redis.expire(key, seconds),
     get: (key) => redis.get(key),
@@ -42,6 +44,10 @@ async function runInSandbox(input: Parameters<RunCase>[0]) {
   const { runInDocker } = await import('@codeclash/judge/runner');
   return runInDocker(input);
 }
+
+setInterval(() => {
+  tickContests(db).catch((error) => log.info({ err: error }, 'scheduler'));
+}, 5000);
 
 // A submission saved while Redis was unreachable never reached the stream; send it again.
 setInterval(() => {

@@ -2,6 +2,8 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { MongoClient, ObjectId, type Db } from 'mongodb';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ensureIndexes } from '../db/indexes.js';
+import { tickContests, transitionContest } from './contests.js';
+import { HttpError } from './errors.js';
 import { claimSubmission, commitVerdict, enqueueSubmission, reclaimSubmission } from './judging.js';
 
 let repl: MongoMemoryReplSet;
@@ -31,6 +33,28 @@ async function user() {
   });
   return String(inserted.insertedId);
 }
+
+describe('contests', () => {
+  it('rejects a jump from draft to running', async () => {
+    const inserted = await db.collection('contests').insertOne({
+      title: 'jump',
+      status: 'draft',
+      capacity: 2,
+      reserved: 0,
+      waitlistSeq: 0,
+      startsAt: new Date(Date.now() - 1000),
+      endsAt: new Date(Date.now() + 3600_000),
+      freezeAt: new Date(Date.now() + 1800_000),
+      registrationOpensAt: new Date(Date.now() - 2000),
+      scoringMode: 'icpc',
+      problemIds: [],
+      type: 'coding',
+    });
+    await expect(transitionContest(db, String(inserted.insertedId), 'running', 'organiser')).rejects.toBeInstanceOf(HttpError);
+    const moved = await tickContests(db);
+    expect(moved).toContain(String(inserted.insertedId));
+  });
+});
 
 describe('exactly once', () => {
   it('ignores a stale claim token and commits one verdict', async () => {
