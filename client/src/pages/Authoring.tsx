@@ -29,6 +29,7 @@ interface SpecCheck { ok: boolean; parseError: string | null; failures: { test: 
 type Section = 'statement' | 'tests' | 'spec' | 'solutions';
 
 const EDITABLE = ['draft', 'blocked'];
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function tagList(tags: unknown): string[] {
   const source = Array.isArray(tags) ? tags : [];
@@ -154,6 +155,25 @@ export function Authoring() {
     });
   }
 
+  async function publishCheck() {
+    if (!version || !(await save())) return;
+    await guarded('check', async () => {
+      await api(`/api/problem-versions/${version.versionId}/publish-check`, { method: 'POST' });
+      setVersion((current) => (current ? { ...current, status: 'checking', report: [] } : current));
+      for (let i = 0; i < 120; i += 1) {
+        await sleep(1500);
+        const next = await api<Version>(`/api/problem-versions/${version.versionId}`);
+        if (next.status !== 'checking') {
+          setVersion(next);
+          await loadProblems();
+          toast(next.status === 'published' ? 'Published. Contests and practice now use this version.' : 'The check blocked this version. See the report.', next.status === 'published' ? 'ok' : 'bad');
+          return;
+        }
+      }
+      toast('The check is still running. Reload later.', 'warn');
+    });
+  }
+
   async function checkSpec() {
     if (!version) return;
     await guarded('spec', async () => {
@@ -263,9 +283,19 @@ export function Authoring() {
                 <div className="row">
                   {!editable && version.status !== 'checking' ? <button className="btn sm" type="button" onClick={newVersion} disabled={working !== ''}><Plus size={14} /> new version</button> : null}
                   <button className="btn sm" type="button" disabled={!editable || working !== '' || !dirty} onClick={save}><Save size={14} /> {working === 'save' ? 'saving…' : 'save'}</button>
+                  <button className="btn primary sm" type="button" disabled={!editable || !version.reference || working !== ''} onClick={publishCheck}>
+                    <ShieldCheck size={14} /> {working === 'check' || version.status === 'checking' ? 'checking in sandbox…' : 'publish check'}
+                  </button>
                 </div>
               </div>
 
+              {version.report.length > 0 ? (
+                <Alert tone={version.status === 'published' ? 'ok' : 'bad'}>
+                  <strong>{version.status === 'published' ? 'Publish check passed' : 'Publish check blocked this version'}</strong>
+                  <ul>{version.report.map((line) => <li key={line}>{line}</li>)}</ul>
+                </Alert>
+              ) : null}
+              {!editable ? <Alert tone="info">This version is {version.status} and cannot change. {version.status !== 'checking' ? 'Start a new version to edit it.' : 'Wait for the check to finish.'}</Alert> : null}
 
               <nav className="tabs" role="tablist" aria-label="Sections">
                 {([['statement', 'statement'], ['tests', 'tests'], ['spec', 'spec'], ['solutions', 'solutions']] as const).map(([key, name]) => (

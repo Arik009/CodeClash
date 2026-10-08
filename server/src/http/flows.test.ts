@@ -40,6 +40,15 @@ function api(method: Method, path: string, token?: string, body?: unknown) {
   return body === undefined ? req : req.send(body as object);
 }
 
+async function until<T>(read: () => Promise<T>, done: (value: T) => boolean) {
+  for (let i = 0; i < 100; i += 1) {
+    const value = await read();
+    if (done(value)) return value;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('timed out waiting');
+}
+
 let admin = '';
 let setter = '';
 let organiser = '';
@@ -91,7 +100,7 @@ afterAll(async () => {
 });
 
 describe('authoring', () => {
-  it('creates a problem and uploads its tests, reference and limits', async () => {
+  it('takes a problem from draft through the publish check into the archive', async () => {
     expect((await api('post', '/api/problems', neha.token, { title: 'x', statement: 'y' })).status).toBe(403);
     const created = await api('post', '/api/problems', setter, {
       title: 'Double', statement: 'Print twice n.', samples: 'input\n4\noutput\n8\n', editorial: 'Multiply by two.', tags: ['math'],
@@ -125,57 +134,49 @@ describe('authoring', () => {
     const draft = await api('get', `/api/problem-versions/${versionId}`, setter);
     expect(draft.body).toMatchObject({ title: 'Double it', status: 'draft', tags: ['math'] });
     expect(draft.body.tests).toHaveLength(2);
-  });
 
-  it('starts a new draft version and answers 404 for unknown ids', async () => {
-    const next = await api('post', `/api/problems/${problemId}/versions`, setter, { statement: 'Print 2n.' });
-    expect(next.body.version).toBe(2);
-    expect((await api('get', `/api/problem-versions/${new ObjectId()}`, setter)).status).toBe(404);
-    expect((await api('post', `/api/problems/${new ObjectId()}/versions`, setter, {})).status).toBe(404);
-  });
-});
+    expect((await api('post', `/api/problem-versions/${versionId}/publish-check`, setter)).status).toBe(202);
+    expect((await api('post', `/api/problem-versions/${versionId}/publish-check`, setter)).status).toBe(409);
+    const checked = await until(() => api('get', `/api/problem-versions/${versionId}`, setter), (res) => res.body.status !== 'checking');
+    expect(checked.body.status).toBe('published');
+    expect((await api('patch', `/api/problem-versions/${versionId}`, setter, { title: 'nope' })).status).toBe(409);
+    expect((await api('put', `/api/problem-versions/${versionId}/tests`, setter, { tests: [] })).status).toBe(409);
 
-describe('practice', () => {
-  beforeAll(async () => {
-    const problem = await db.collection('problems').insertOne({ title: 'Double' });
-    const version = await db.collection('problem_versions').insertOne({
-      problemId: problem.insertedId, version: 1, status: 'published', title: 'Double', statement: 'Print twice n.',
-      samples: 'input\n4\noutput\n8\n', editorial: 'Multiply by two.', tags: ['math'],
-      tests: [{ input: '4\n', output: '8\n', hidden: false }, { input: '-3\n', output: '-6\n', hidden: true }],
-      limits: { python: { timeMs: 1000, memoryMb: 128 } },
-    });
-    problemId = String(problem.insertedId);
-    versionId = String(version.insertedId);
-  });
-
-  it('lists the archive and opens a problem from it', async () => {
+    const catalog = await api('get', '/api/catalog', organiser);
+    expect(catalog.body).toContainEqual(expect.objectContaining({ versionId, tags: ['math'] }));
     const archive = await api('get', '/api/archive');
     expect(archive.body.items.map((row: { versionId: string }) => row.versionId)).toContain(versionId);
     expect(archive.body).toMatchObject({ page: 1, pageSize: 50, tags: expect.arrayContaining(['math']) });
     const paged = await api('get', '/api/archive?pageSize=1&page=1');
     expect(paged.body.items).toHaveLength(1);
     expect(paged.body.total).toBe(archive.body.total);
-    expect((await api('get', `/api/archive/${problemId}`)).body.title).toBe('Double');
+    expect((await api('get', `/api/archive/${problemId}`)).body.title).toBe('Double it');
     const open = await api('get', `/api/problem-versions/${versionId}/public`);
     expect(open.body).toMatchObject({ tags: ['math'], limits: { python: { timeMs: 1000, memoryMb: 128 } } });
+  });
+
+  it('blocks a version whose wrong solution survives, then reopens it for edits', async () => {
+    const next = await api('post', `/api/problems/${problemId}/versions`, setter, { statement: 'Print 2n.' });
+    expect(next.body.version).toBe(2);
+    const v2 = next.body.versionId as string;
+    await api('put', `/api/problem-versions/${v2}/tests`, setter, {
+      tests: [{ input: '4\n', output: '8\n' }],
+      reference: { language: 'python', code: '# REF' },
+      wrongSolutions: [{ label: 'same as reference', language: 'python', code: '# REF too' }],
+    });
+    await api('post', `/api/problem-versions/${v2}/publish-check`, setter);
+    const blocked = await until(() => api('get', `/api/problem-versions/${v2}`, setter), (res) => res.body.status !== 'checking');
+    expect(blocked.body.status).toBe('blocked');
+    expect(blocked.body.report).toContain('wrong solution survived: same as reference');
+    expect((await api('patch', `/api/problem-versions/${v2}`, setter, { editorial: 'Double it.' })).status).toBe(200);
+    expect((await api('get', `/api/problem-versions/${new ObjectId()}`, setter)).status).toBe(404);
+    expect((await api('post', `/api/problems/${new ObjectId()}/versions`, setter, {})).status).toBe(404);
   });
 });
 
 describe('contest lifecycle', () => {
   let contestId = '';
   const minute = 60_000;
-
-  beforeAll(async () => {
-    const problem = await db.collection('problems').insertOne({ title: 'Double' });
-    const version = await db.collection('problem_versions').insertOne({
-      problemId: problem.insertedId, version: 1, status: 'published', title: 'Double', statement: 'Print twice n.',
-      samples: 'input\n4\noutput\n8\n', editorial: 'Multiply by two.', tags: ['math'],
-      tests: [{ input: '4\n', output: '8\n', hidden: false }, { input: '-3\n', output: '-6\n', hidden: true }],
-      limits: { python: { timeMs: 1000, memoryMb: 128 } },
-    });
-    problemId = String(problem.insertedId);
-    versionId = String(version.insertedId);
-  });
 
   it('validates the schedule and creates a draft', async () => {
     const base = {

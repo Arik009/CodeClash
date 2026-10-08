@@ -10,7 +10,7 @@ import { auditCollection } from '../db/audit.js';
 import { transitionContest } from '../domain/contests.js';
 import { HttpError, isDuplicateKey } from '../domain/errors.js';
 import { enqueueSubmission, latestPublished, publishedVersions } from '../domain/judging.js';
-import { testsFromZip, type RunCase } from '../domain/problems.js';
+import { runPublishCheck, testsFromZip, type RunCase } from '../domain/problems.js';
 import { reserveSeat, withdrawSeat } from '../domain/registration.js';
 import { leaderboard } from '../domain/scoring.js';
 import { checkPassword, hashPassword, issueRefresh, readAccess, revokeRefresh, rotateRefresh, signAccess } from './auth.js';
@@ -769,6 +769,44 @@ export function createApp(deps: AppDeps) {
     }
     await queueOutbox('QuizAnswered', { contestId: String(question.contestId), userId: user.sub });
     res.json({ score, correct, streak: correct ? priorCorrect + 1 : 0 });
+  }));
+
+  /** Sandbox-heavy work runs after the response; the client polls. At most two at a time per process. */
+  let backgroundJobs = 0;
+  function background(label: string, job: () => Promise<void>) {
+    if (backgroundJobs >= 2) throw new HttpError(429, 'Two checks are already running; try again shortly');
+    backgroundJobs += 1;
+    void job()
+      .catch((error) => deps.log?.info({ err: error }, label))
+      .finally(() => { backgroundJobs -= 1; });
+  }
+
+  app.post('/api/problem-versions/:id/publish-check', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['setter', 'admin']);
+    const claimed = await db.collection('problem_versions').findOneAndUpdate(
+      { _id: new ObjectId(req.params.id), status: { $in: ['draft', 'blocked'] } },
+      { $set: { status: 'checking', report: [] } },
+    );
+    if (!claimed) throw new HttpError(409, 'Only a draft or blocked version can be checked');
+    const versionId = req.params.id;
+    try {
+      background('publish-check', async () => {
+        try {
+          const report = await runPublishCheck(db, versionId, deps.runCase ?? runInSandbox);
+          await audit(db, user.sub, 'problem.publish-check', versionId, report.ok ? 'published' : 'blocked');
+        } catch (error) {
+          await db.collection('problem_versions').updateOne(
+            { _id: new ObjectId(versionId) },
+            { $set: { status: 'blocked', report: [`check failed: ${error instanceof Error ? error.message : 'error'}`] } },
+          );
+          throw error;
+        }
+      });
+    } catch (error) {
+      await db.collection('problem_versions').updateOne({ _id: claimed._id }, { $set: { status: claimed.status } });
+      throw error;
+    }
+    res.status(202).json({ status: 'checking' });
   }));
 
   app.get('/api/admin/audit', asyncRoute(async (req, res) => {

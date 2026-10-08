@@ -20,6 +20,7 @@ const mongo = new MongoClient(mongoUrl);
 await mongo.connect();
 const db = mongo.db();
 await ensureIndexes(db);
+await db.collection('problem_versions').updateMany({ status: 'checking' }, { $set: { status: 'blocked', report: ['check interrupted by a restart; run it again'] } });
 const auditClient = new MongoClient(auditUrl);
 await auditClient.connect();
 const auditDb = auditClient.db();

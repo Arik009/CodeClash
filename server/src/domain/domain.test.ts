@@ -4,8 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ensureIndexes } from '../db/indexes.js';
 import { tickContests, transitionContest } from './contests.js';
 import { HttpError } from './errors.js';
-import { claimSubmission, commitVerdict, enqueueSubmission, reclaimSubmission } from './judging.js';
-import { testsFromZip } from './problems.js';
+import { claimSubmission, commitVerdict, enqueueSubmission, latestPublished, publishedVersions, reclaimSubmission } from './judging.js';
+import { applyPublishReport, publishDecision, runPublishCheck, testsFromZip } from './problems.js';
 import { reserveSeat, seatInvariants, withdrawSeat } from './registration.js';
 import { awardFirstSolve, dispatchOutbox, leaderboard, recomputeStanding } from './scoring.js';
 import AdmZip from 'adm-zip';
@@ -131,6 +131,20 @@ describe('contests', () => {
   });
 });
 
+describe('publish check', () => {
+  it('blocks when a wrong solution still passes', () => {
+    return expect(publishDecision(['AC', 'AC'], [{ label: 'quadratic', verdicts: ['AC', 'AC'] }])).resolves.toMatchObject({
+      ok: false,
+    });
+  });
+
+  it('passes when the reference is AC and every wrong solution fails somewhere', () => {
+    return expect(publishDecision(['AC', 'AC'], [{ label: 'quadratic', verdicts: ['AC', 'TLE'] }])).resolves.toMatchObject({
+      ok: true,
+    });
+  });
+});
+
 describe('exactly once', () => {
   it('ignores a stale claim token and awards first solve once', async () => {
     const contestId = await openContest(10);
@@ -221,6 +235,28 @@ describe('problems', () => {
     expect(tests.find((t) => t.input.startsWith('1'))?.hidden).toBe(true);
   });
 
+  it('publishes only from sandbox verdicts', async () => {
+    const problem = await db.collection('problems').insertOne({ title: 'sum', statement: 's', samples: '', tags: [] });
+    const version = await db.collection('problem_versions').insertOne({
+      problemId: problem.insertedId,
+      version: 1,
+      status: 'draft',
+      title: 'sum',
+      statement: 's',
+      tests: [{ input: '1 2\n', output: '3\n' }],
+      reference: { language: 'python', code: 'print(3)' },
+      wrongSolutions: [{ label: 'sub', language: 'python', code: 'wrong' }],
+      limits: { python: { timeMs: 2000, memoryMb: 256 } },
+    });
+    const report = await runPublishCheck(db, String(version.insertedId), async (input) => ({
+      verdict: input.code === 'wrong' ? 'WA' : 'AC',
+      stdout: '3\n',
+    }));
+    expect(report.ok).toBe(true);
+    const stored = await db.collection('problem_versions').findOne({ _id: version.insertedId });
+    expect(stored?.status).toBe('published');
+  });
+
   it('scores a judged contest submission from the outbox into the sorted set', async () => {
     const contestId = await openContest(10);
     const uid = await user();
@@ -259,6 +295,17 @@ describe('problems', () => {
     expect(scores[`lb:${contestId}:rank:${uid}`]).toBe(0);
     expect(events.some((e) => e.endsWith(':leaderboard'))).toBe(true);
     expect(events.some((e) => e.endsWith(':VerdictCommitted'))).toBe(false);
+  });
+
+  it('retires the older published version when a new one publishes', async () => {
+    const problem = await db.collection('problems').insertOne({ title: 'v', statement: 's', samples: '', tags: [] });
+    const old = await db.collection('problem_versions').insertOne({ problemId: problem.insertedId, version: 1, status: 'published', title: 'v' });
+    const next = await db.collection('problem_versions').insertOne({ problemId: problem.insertedId, version: 2, status: 'checking', title: 'v' });
+    await applyPublishReport(db, String(next.insertedId), { ok: true, failures: [] });
+    expect((await db.collection('problem_versions').findOne({ _id: old.insertedId }))?.status).toBe('superseded');
+    const latest = await latestPublished(db, problem.insertedId);
+    expect(String(latest?._id)).toBe(String(next.insertedId));
+    expect((await publishedVersions(db, [problem.insertedId]))).toHaveLength(1);
   });
 });
 
