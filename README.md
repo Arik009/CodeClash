@@ -62,3 +62,13 @@ Copy-Item .env.example server\.env
 | `CLIENT_ORIGIN` | Browser origin allowed by CORS. Default `http://localhost:5173` |
 
 Do not commit `.env`. It is listed in `.gitignore`.
+
+## Tests
+
+These do not need the Docker stack:
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+```
