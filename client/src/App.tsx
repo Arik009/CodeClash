@@ -5,6 +5,7 @@ import { api, loadSession, saveSession, SIGNED_OUT, type Session } from './api';
 import { Admin } from './pages/Admin';
 import { Arena } from './pages/Arena';
 import { Auth } from './pages/Auth';
+import { Authoring } from './pages/Authoring';
 import { ContestRoom } from './pages/ContestRoom';
 import { Control } from './pages/Control';
 import { Home } from './pages/Home';
@@ -40,6 +41,7 @@ export default function App() {
 
   const role = session?.user.role;
   const unverified = session?.user.emailVerified === false;
+  const isSetter = role === 'setter' || role === 'admin';
   const isOrganiser = role === 'organiser' || role === 'admin';
   const signIn = <Navigate to="/auth" state={{ from: location.pathname }} />;
   return (
@@ -51,6 +53,7 @@ export default function App() {
           <nav className="menu" aria-label="Main">
             <NavLink to="/arena">contests</NavLink>
             <NavLink to="/problemset">problemset</NavLink>
+            {isSetter ? <NavLink to="/authoring">authoring</NavLink> : null}
             {isOrganiser ? <NavLink to="/control">control</NavLink> : null}
             {role === 'admin' ? <NavLink to="/admin">admin</NavLink> : null}
           </nav>
@@ -81,6 +84,7 @@ export default function App() {
           <Route path="/arena/:id" element={<ContestRoom me={session?.user.id ?? null} />} />
           <Route path="/problemset" element={<Problemset />} />
           <Route path="/practice/:versionId" element={<Practice signedIn={!!session} />} />
+          <Route path="/authoring" element={isSetter ? <Authoring /> : session ? <Navigate to="/arena" /> : signIn} />
           <Route path="/control" element={isOrganiser ? <Control /> : session ? <Navigate to="/arena" /> : signIn} />
           <Route path="/admin" element={role === 'admin' ? <Admin me={session!.user.id} /> : session ? <Navigate to="/arena" /> : signIn} />
           <Route path="*" element={<NotFound />} />

@@ -9,6 +9,7 @@ export async function ensureIndexes(db: Db) {
   );
   await db.collection('standings').createIndex({ contestId: 1, userId: 1 }, { unique: true });
   await db.collection('submissions').createIndex({ status: 1, submittedAt: 1 });
+  await db.collection('problem_versions').createIndex({ problemId: 1, version: 1 }, { unique: true });
   await db.collection('outbox').createIndex({ sentAt: 1, createdAt: 1 });
   await db.collection('refresh_tokens').createIndex({ tokenHash: 1 }, { unique: true });
   await db.collection('refresh_tokens').createIndex({ family: 1 });

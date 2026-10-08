@@ -1,4 +1,4 @@
-import { ROLES, SOURCE_LANGUAGES, type ContestStatus, type Role } from '@codeclash/shared';
+import { defaultLimits, ROLES, SOURCE_LANGUAGES, type ContestStatus, type Role } from '@codeclash/shared';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { BSON, type Db, ObjectId } from 'mongodb';
@@ -313,6 +313,121 @@ export function createApp(deps: AppDeps) {
     const user = auth(req);
     const result = await withdrawSeat(db, req.params.id, user.sub);
     res.json(result);
+  }));
+
+  app.post('/api/problems', asyncRoute(async (req, res) => {
+    const user = requireRole(req, ['setter', 'admin']);
+    const body = z.object({
+      title: z.string().min(1),
+      statement: z.string().min(1),
+      samples: z.string().default(''),
+      editorial: z.string().default(''),
+      tags: z.array(z.string()).default([]),
+      difficulty: z.enum(['easy', 'medium', 'hard']).default('medium'),
+    }).parse(req.body);
+    const problem = await db.collection('problems').insertOne({ ...body, createdBy: new ObjectId(user.sub), createdAt: new Date() });
+    const version = await db.collection('problem_versions').insertOne({
+      problemId: problem.insertedId,
+      version: 1,
+      ...body,
+      limits: defaultLimits(),
+      tests: [],
+      reference: null,
+      wrongSolutions: [],
+      status: 'draft',
+      report: [],
+    });
+    res.status(201).json({ problemId: String(problem.insertedId), versionId: String(version.insertedId) });
+  }));
+
+  app.get('/api/problems', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const rows = await db.collection('problem_versions').aggregate([
+      { $project: { problemId: 1, version: 1, title: 1, status: 1 } },
+      { $sort: { version: -1 } },
+      { $group: { _id: '$problemId', doc: { $first: '$$ROOT' } } },
+      { $replaceRoot: { newRoot: '$doc' } },
+      { $sort: { title: 1 } },
+    ]).toArray();
+    res.json(rows.map((v) => ({
+      problemId: String(v.problemId),
+      versionId: String(v._id),
+      version: v.version,
+      title: v.title,
+      status: v.status,
+    })));
+  }));
+
+  app.post('/api/problems/:id/versions', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const body = z.object({
+      statement: z.string().min(1).optional(),
+      samples: z.string().optional(),
+      editorial: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+    }).parse(req.body ?? {});
+    const problem = await db.collection('problems').findOne({ _id: new ObjectId(req.params.id) });
+    if (!problem) throw new HttpError(404, 'Problem not found');
+    const latest = await db.collection('problem_versions').find({ problemId: problem._id }).sort({ version: -1 }).limit(1).next();
+    const version = ((latest?.version as number) ?? 0) + 1;
+    const inserted = await db.collection('problem_versions').insertOne({
+      problemId: problem._id,
+      version,
+      title: latest?.title ?? problem.title,
+      statement: body.statement ?? latest?.statement,
+      samples: body.samples ?? latest?.samples ?? '',
+      editorial: body.editorial ?? latest?.editorial ?? '',
+      tags: body.tags ?? latest?.tags ?? [],
+      difficulty: latest?.difficulty ?? 'medium',
+      limits: latest?.limits,
+      tests: latest?.tests ?? [],
+      reference: latest?.reference ?? null,
+      wrongSolutions: latest?.wrongSolutions ?? [],
+      status: 'draft',
+      report: [],
+    });
+    res.status(201).json({ versionId: String(inserted.insertedId), version });
+  }));
+
+  app.get('/api/problem-versions/:id', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(req.params.id) });
+    if (!version) throw new HttpError(404, 'Version not found');
+    res.json({
+      problemId: String(version.problemId),
+      versionId: String(version._id),
+      version: version.version,
+      title: version.title,
+      statement: version.statement ?? '',
+      samples: version.samples ?? '',
+      editorial: version.editorial ?? '',
+      tags: version.tags ?? [],
+      difficulty: version.difficulty ?? 'medium',
+      limits: version.limits ?? {},
+      tests: version.tests ?? [],
+      reference: version.reference ?? null,
+      wrongSolutions: version.wrongSolutions ?? [],
+      status: version.status,
+      report: version.report ?? [],
+    });
+  }));
+
+  app.patch('/api/problem-versions/:id', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const body = z.object({
+      title: z.string().min(1).optional(),
+      statement: z.string().min(1).optional(),
+      samples: z.string().optional(),
+      editorial: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
+    }).parse(req.body);
+    const updated = await db.collection('problem_versions').updateOne(
+      { _id: new ObjectId(req.params.id), status: { $in: ['draft', 'blocked'] } },
+      { $set: { ...body, status: 'draft' } },
+    );
+    if (updated.matchedCount === 0) throw new HttpError(409, 'Only draft or blocked versions can be edited');
+    res.json({ ok: true });
   }));
 
   app.get('/api/archive', asyncRoute(async (req, res) => {

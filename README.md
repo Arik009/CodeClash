@@ -49,6 +49,7 @@ A new account has to confirm its email before it can take a seat or submit. In l
 
 - **Contests** lists rounds. A live round has a seat and a timer.
 - **Problemset** is practice. Run samples checks the visible examples and stores nothing. Submit judges the hidden tests.
+- **Authoring** (setter or admin) drafts a problem. **New problem** opens in the pane on the right.
 - **Control** (organiser or admin) creates a contest, moves it through registration, running, freeze, end, and publish, and can cancel it.
 - **Admin** is people and the audit log.
 

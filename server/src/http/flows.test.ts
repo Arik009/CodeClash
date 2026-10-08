@@ -40,6 +40,7 @@ function api(method: Method, path: string, token?: string, body?: unknown) {
 }
 
 let admin = '';
+let setter = '';
 let organiser = '';
 let neha = { token: '', id: '' };
 let ravi = { token: '', id: '' };
@@ -77,6 +78,7 @@ beforeAll(async () => {
   });
   app = createApp({ db, redis, runCase });
   admin = (await api('post', '/api/auth/login', undefined, { email: 'admin@codeclash.local', password: 'codeclash' })).body.access;
+  setter = await promote('setter@example.com', 'setter');
   organiser = await promote('organiser@example.com', 'organiser');
   neha = await signUp('neha@example.com', 'Neha');
   ravi = await signUp('ravi@example.com', 'Ravi');
@@ -85,6 +87,30 @@ beforeAll(async () => {
 afterAll(async () => {
   await client.close();
   await repl.stop();
+});
+
+describe('authoring', () => {
+  it('creates a problem and edits its draft version', async () => {
+    expect((await api('post', '/api/problems', neha.token, { title: 'x', statement: 'y' })).status).toBe(403);
+    const created = await api('post', '/api/problems', setter, {
+      title: 'Double', statement: 'Print twice n.', samples: 'input\n4\noutput\n8\n', editorial: 'Multiply by two.', tags: ['math'],
+    });
+    expect(created.status).toBe(201);
+    ({ problemId, versionId } = created.body);
+
+    const list = await api('get', '/api/problems', setter);
+    expect(list.body.map((row: { title: string }) => row.title)).toContain('Double');
+    expect((await api('patch', `/api/problem-versions/${versionId}`, setter, { title: 'Double it' })).body).toEqual({ ok: true });
+    const draft = await api('get', `/api/problem-versions/${versionId}`, setter);
+    expect(draft.body).toMatchObject({ title: 'Double it', status: 'draft', tags: ['math'] });
+  });
+
+  it('starts a new draft version and answers 404 for unknown ids', async () => {
+    const next = await api('post', `/api/problems/${problemId}/versions`, setter, { statement: 'Print 2n.' });
+    expect(next.body.version).toBe(2);
+    expect((await api('get', `/api/problem-versions/${new ObjectId()}`, setter)).status).toBe(404);
+    expect((await api('post', `/api/problems/${new ObjectId()}/versions`, setter, {})).status).toBe(404);
+  });
 });
 
 describe('practice', () => {
