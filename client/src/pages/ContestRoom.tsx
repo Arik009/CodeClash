@@ -2,8 +2,10 @@ import { ArrowLeft, Check, Clock, List, Lock, UserPlus, Users } from 'lucide-rea
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
-import { ProblemView, type Limits } from '../problem';
-import { Alert, Empty, errorText, formatLeft, formatWhen, letter, StatusPill, toast, useLanguage, useNow } from '../ui';
+import { CodePanel, ProblemView, type Limits } from '../problem';
+import {
+  Alert, Empty, errorText, formatLeft, formatWhen, LANGUAGES, letter, StatusPill, toast, useLanguage, useNow, VerdictText,
+} from '../ui';
 
 interface Problem { problemId: string; versionId: string; title: string; statement: string; samples: string; editorial: string | null; limits?: Limits }
 interface Contest {
@@ -21,9 +23,10 @@ interface Contest {
   problems: Problem[];
 }
 interface Seat { seatId: string; status: string; position: number | null }
+interface MySubmission { id: string; problemId: string; language: string; status: string; verdict: string | null; submittedAt: string }
 
 const ACTIVE_SEAT = ['reserved', 'modified', 'competing'];
-type Tab = 'problems';
+type Tab = 'problems' | 'mine';
 
 export function ContestRoom({ me }: { me: string | null }) {
   const { id = '' } = useParams();
@@ -33,7 +36,8 @@ export function ContestRoom({ me }: { me: string | null }) {
   const [contest, setContest] = useState<Contest | null>(null);
   const [skew, setSkew] = useState(0);
   const [seat, setSeat] = useState<Seat | null>(null);
-  const [language] = useLanguage();
+  const [mine, setMine] = useState<MySubmission[]>([]);
+  const [language, setLanguage] = useLanguage();
   const [error, setError] = useState('');
   const now = useNow(1000) + skew;
 
@@ -42,11 +46,13 @@ export function ContestRoom({ me }: { me: string | null }) {
     setSkew(new Date(c.serverNow).getTime() - Date.now());
   }).catch((e) => setError(errorText(e))), [id]);
   const loadSeat = useCallback(() => (me ? api<Seat | null>(`/api/contests/${id}/seat`).then(setSeat).catch(() => {}) : Promise.resolve()), [id, me]);
+  const loadMine = useCallback(() => (me ? api<MySubmission[]>(`/api/contests/${id}/submissions/mine`).then(setMine).catch(() => {}) : Promise.resolve()), [id, me]);
 
   useEffect(() => {
     void loadContest();
     void loadSeat();
-  }, [loadContest, loadSeat]);
+    void loadMine();
+  }, [loadContest, loadSeat, loadMine]);
 
   function go(next: { tab?: Tab; p?: string }) {
     const merged = { tab, p: openLetter, ...next };
@@ -85,8 +91,15 @@ export function ContestRoom({ me }: { me: string | null }) {
   const hasSeat = seat ? ACTIVE_SEAT.includes(seat.status) : false;
   const canRegister = ['registration_open', 'running'].includes(contest.status);
   const clock = countdown(contest, now);
+  const solved = new Set(mine.filter((s) => s.verdict === 'AC').map((s) => s.problemId));
+  const tried = new Set(mine.filter((s) => s.verdict && s.verdict !== 'AC').map((s) => s.problemId));
   const problemIndex = openLetter ? openLetter.toUpperCase().charCodeAt(0) - 65 : -1;
   const problem = contest.problems[problemIndex] ?? null;
+  const titleOf = (problemId: string) => {
+    const index = contest.problems.findIndex((p) => p.problemId === problemId);
+    return index >= 0 ? `${letter(index)}. ${contest.problems[index]!.title}` : '—';
+  };
+  const blocked = !me ? 'sign in to submit' : !live ? 'the contest is not running' : !hasSeat ? 'register for a seat to submit' : undefined;
 
   return (
     <div className="page wide">
@@ -132,6 +145,11 @@ export function ContestRoom({ me }: { me: string | null }) {
         <button type="button" role="tab" aria-selected={tab === 'problems'} className={`tab ${tab === 'problems' ? 'on' : ''}`} onClick={() => go({ tab: 'problems', p: '' })}>
           <List size={14} /> problems <span className="count">{contest.problemCount}</span>
         </button>
+        {me ? (
+          <button type="button" role="tab" aria-selected={tab === 'mine'} className={`tab ${tab === 'mine' ? 'on' : ''}`} onClick={() => go({ tab: 'mine', p: '' })}>
+            my submissions <span className="count">{mine.length}</span>
+          </button>
+        ) : null}
       </nav>
 
       {tab === 'problems' && !problem ? (
@@ -151,10 +169,11 @@ export function ContestRoom({ me }: { me: string | null }) {
                 {contest.problems.map((p, index) => {
                   const limit = p.limits?.[language] ?? { timeMs: 2000, memoryMb: 256 };
                   return (
-                    <tr key={p.problemId}>
+                    <tr key={p.problemId} className={solved.has(p.problemId) ? 'solved' : tried.has(p.problemId) ? 'tried' : ''}>
                       <td><span className="letter">{letter(index)}</span></td>
                       <td>
                         <button type="button" className="row-link linkbtn" onClick={() => go({ p: letter(index) })}>{p.title}</button>
+                        {solved.has(p.problemId) ? <span className="ok small"> · solved</span> : tried.has(p.problemId) ? <span className="bad small"> · tried</span> : null}
                       </td>
                       <td className="muted small nowrap">{limit.timeMs / 1000} s, {limit.memoryMb} MB</td>
                     </tr>
@@ -176,7 +195,7 @@ export function ContestRoom({ me }: { me: string | null }) {
                 type="button"
                 role="tab"
                 aria-selected={index === problemIndex}
-                className={index === problemIndex ? 'on' : ''}
+                className={`${index === problemIndex ? 'on' : ''} ${solved.has(p.problemId) ? 'solved' : tried.has(p.problemId) ? 'tried' : ''}`}
                 onClick={() => go({ p: letter(index) })}
                 title={p.title}
               >
@@ -186,8 +205,55 @@ export function ContestRoom({ me }: { me: string | null }) {
           </div>
           <div className="workbench">
             <ProblemView problem={problem} index={problemIndex} language={language} editorial="always" />
+            <CodePanel
+              key={problem.problemId}
+              draftKey={`cc.draft.${id}.${problem.problemId}`}
+              label={`${letter(problemIndex)} · ${problem.title}`}
+              blocked={blocked}
+              onLanguage={setLanguage}
+              onJudged={() => { void loadMine(); }}
+              run={async (lang, code) => api<{ results: { verdict: string }[] }>('/api/run', {
+                method: 'POST',
+                body: JSON.stringify({ problemVersionId: problem.versionId, language: lang, code, contestId: id }),
+              })}
+              submit={async (lang, code) => {
+                const result = await api<{ id: string }>(`/api/contests/${id}/submissions`, {
+                  method: 'POST',
+                  headers: { 'idempotency-key': crypto.randomUUID() },
+                  body: JSON.stringify({ problemVersionId: problem.versionId, language: lang, code }),
+                });
+                void loadMine();
+                return result.id;
+              }}
+            />
           </div>
         </>
+      ) : null}
+
+      {tab === 'mine' ? (
+        mine.length === 0 ? <Empty title="No submissions yet">Open a problem and submit with Ctrl + Enter.</Empty> : (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>when</th><th>problem</th><th>lang</th><th>verdict</th></tr></thead>
+              <tbody>
+                {mine.map((s, index) => (
+                  <tr key={s.id}>
+                    <td className="muted num">{mine.length - index}</td>
+                    <td className="nowrap num">{new Date(s.submittedAt).toLocaleTimeString()}</td>
+                    <td>
+                      <button type="button" className="row-link linkbtn" onClick={() => {
+                        const index2 = contest.problems.findIndex((p) => p.problemId === s.problemId);
+                        if (index2 >= 0) go({ tab: 'problems', p: letter(index2) });
+                      }}>{titleOf(s.problemId)}</button>
+                    </td>
+                    <td className="muted">{LANGUAGES.find((item) => item.id === s.language)?.name ?? s.language}</td>
+                    <td><VerdictText verdict={s.verdict} status={s.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
       ) : null}
     </div>
   );

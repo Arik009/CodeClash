@@ -162,6 +162,33 @@ describe('contest lifecycle', () => {
     expect(hidden.body.problems).toEqual([]);
   });
 
+  it('runs: only a competing seat may submit', async () => {
+    await api('post', `/api/contests/${contestId}/transition`, organiser, { to: 'running' });
+    expect(redis.published).toContain('contest:running');
+    expect((await api('get', `/api/contests/${contestId}/seat`, neha.token)).body.status).toBe('competing');
+    const room = await api('get', `/api/contests/${contestId}`, neha.token);
+    expect(room.body.problems[0]).toMatchObject({ versionId, editorial: null, limits: { python: { timeMs: 1000, memoryMb: 128 } } });
+
+    const code = { problemVersionId: versionId, language: 'python', code: 'print(1)' };
+    expect((await api('post', `/api/contests/${contestId}/submissions`, ravi.token, code)).status).toBe(403);
+    const sent = await api('post', `/api/contests/${contestId}/submissions`, neha.token, code);
+    expect(sent.status).toBe(202);
+    expect((await api('get', `/api/submissions/${sent.body.id}`, neha.token)).body.status).toBe('queued');
+    expect((await api('get', `/api/submissions/${sent.body.id}`, ravi.token)).status).toBe(403);
+    expect((await api('get', `/api/submissions/${sent.body.id}`, admin)).status).toBe(200);
+    expect((await api('get', `/api/contests/${contestId}/submissions/mine`, neha.token)).body).toHaveLength(1);
+  });
+
+  it('freezes, ends and publishes, then shows the editorial and returns the problem to the archive', async () => {
+    for (const to of ['frozen', 'ended', 'published']) {
+      expect((await api('post', `/api/contests/${contestId}/transition`, organiser, { to })).body.to).toBe(to);
+    }
+    const room = await api('get', `/api/contests/${contestId}`);
+    expect(room.body.problems[0].editorial).toBe('Multiply by two.');
+    expect((await api('get', `/api/problem-versions/${versionId}/public`)).status).toBe(200);
+    expect((await api('get', `/api/contests/${new ObjectId()}`)).status).toBe(404);
+  });
+
   it('accepts practice submissions on archived problems', async () => {
     const sent = await api('post', '/api/practice/submissions', ravi.token, { problemVersionId: versionId, language: 'javascript', code: 'console.log(1)' });
     expect(sent.status).toBe(202);

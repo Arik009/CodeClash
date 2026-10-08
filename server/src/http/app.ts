@@ -260,6 +260,24 @@ export function createApp(deps: AppDeps) {
     res.json(seat ? { seatId: String(seat._id), status: seat.status, position: seat.waitlistPos ?? null } : null);
   }));
 
+  app.get('/api/contests/:id/submissions/mine', asyncRoute(async (req, res) => {
+    const user = auth(req);
+    const rows = await db.collection('submissions')
+      .find({ contestId: new ObjectId(req.params.id), userId: new ObjectId(user.sub) })
+      .project({ code: 0 })
+      .sort({ submittedAt: -1 })
+      .limit(50)
+      .toArray();
+    res.json(rows.map((row) => ({
+      id: String(row._id),
+      problemId: String(row.problemId),
+      language: row.language,
+      status: row.status,
+      verdict: row.verdict,
+      submittedAt: row.submittedAt,
+    })));
+  }));
+
   app.get('/api/catalog', asyncRoute(async (req, res) => {
     requireRole(req, STAFF);
     const versions = await publishedVersions(db);
@@ -378,6 +396,22 @@ export function createApp(deps: AppDeps) {
     return key;
   }
 
+  app.post('/api/contests/:id/submissions', asyncRoute(async (req, res) => {
+    const user = auth(req);
+    await assertVerified(db, user.sub);
+    const body = z.object({
+      problemVersionId: z.string(),
+      language: z.enum(SOURCE_LANGUAGES),
+      code: z.string().min(1).max(64_000),
+    }).parse(req.body);
+    await submitLimit(user.sub);
+    const queued = await enqueueSubmission(db, { ...body, userId: user.sub, contestId: req.params.id, kind: 'contest', idempotencyKey: idempotencyKey(req) });
+    if (!queued.replay) {
+      await redis.xadd(queued.stream, '*', 'submissionId', queued.id);
+    }
+    res.status(queued.replay ? 200 : 202).json({ id: queued.id, replay: queued.replay });
+  }));
+
   app.post('/api/run', asyncRoute(async (req, res) => {
     const user = auth(req);
     await assertVerified(db, user.sub);
@@ -385,6 +419,7 @@ export function createApp(deps: AppDeps) {
       problemVersionId: z.string(),
       language: z.enum(SOURCE_LANGUAGES),
       code: z.string().min(1).max(64_000),
+      contestId: z.string().optional(),
     }).parse(req.body);
     res.json(await runSamples(db, deps.runCase ?? runInSandbox, { ...body, userId: user.sub }));
   }));

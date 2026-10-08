@@ -130,8 +130,21 @@ describe('contests', () => {
 
 describe('exactly once', () => {
   it('ignores a stale claim token and commits one verdict', async () => {
+    const contestId = await openContest(10);
     const uid = await user();
+    await db.collection('seats').insertOne({
+      contestId: new ObjectId(contestId),
+      userId: new ObjectId(uid),
+      status: 'competing',
+      active: true,
+      waitlistPos: null,
+      createdAt: new Date(),
+    });
     const problem = await db.collection('problems').insertOne({ title: 'p', statement: 's', samples: '', tags: [] });
+    await db.collection('contests').updateOne(
+      { _id: new ObjectId(contestId) },
+      { $set: { status: 'running', problemIds: [problem.insertedId], endsAt: new Date(Date.now() + 3600_000) } },
+    );
     const version = await db.collection('problem_versions').insertOne({
       problemId: problem.insertedId,
       version: 1,
@@ -141,10 +154,11 @@ describe('exactly once', () => {
     });
     const queued = await enqueueSubmission(db, {
       userId: uid,
+      contestId,
       problemVersionId: String(version.insertedId),
       language: 'python',
       code: 'print(1)',
-      kind: 'practice',
+      kind: 'contest',
     });
     await claimSubmission(db, queued.id, 'token-a', 'worker-1');
     await reclaimSubmission(db, queued.id, 'token-b', 'worker-2');
@@ -154,5 +168,60 @@ describe('exactly once', () => {
     expect(fresh).not.toBeNull();
     const again = await commitVerdict(db, queued.id, 'token-b', 'AC', null);
     expect(again).toBeNull();
+  });
+
+  it('refuses a submission without a seat', async () => {
+    const contestId = await openContest(10);
+    await db.collection('contests').updateOne({ _id: new ObjectId(contestId) }, { $set: { status: 'running' } });
+    const version = await db.collection('problem_versions').insertOne({
+      problemId: new ObjectId(),
+      version: 1,
+      status: 'published',
+      title: 'p',
+    });
+    await expect(
+      enqueueSubmission(db, {
+        userId: await user(),
+        contestId,
+        problemVersionId: String(version.insertedId),
+        language: 'python',
+        code: 'print(1)',
+        kind: 'contest',
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe('contest rules', () => {
+  async function liveContest(overrides: Record<string, unknown> = {}) {
+    const problem = await db.collection('problems').insertOne({ title: 'in', statement: 's', samples: '', tags: [] });
+    const version = await db.collection('problem_versions').insertOne({ problemId: problem.insertedId, version: 1, status: 'published', title: 'in' });
+    const now = Date.now();
+    const contest = await db.collection('contests').insertOne({
+      title: 'rules',
+      type: 'mixed',
+      status: 'running',
+      capacity: 10,
+      reserved: 0,
+      waitlistSeq: 0,
+      startsAt: new Date(now - 3600_000),
+      freezeAt: new Date(now - 60_000),
+      endsAt: new Date(now + 3600_000),
+      registrationOpensAt: new Date(now - 7200_000),
+      scoringMode: 'icpc',
+      problemIds: [problem.insertedId],
+      ...overrides,
+    });
+    const uid = await user();
+    await db.collection('seats').insertOne({ contestId: contest.insertedId, userId: new ObjectId(uid), status: 'competing', active: true, waitlistPos: null, createdAt: new Date() });
+    return { contestId: String(contest.insertedId), versionId: String(version.insertedId), problemId: problem.insertedId, uid };
+  }
+
+  it('refuses a problem that is not part of the contest', async () => {
+    const { contestId, uid } = await liveContest();
+    const other = await db.collection('problem_versions').insertOne({ problemId: new ObjectId(), version: 1, status: 'published', title: 'x' });
+    await expect(enqueueSubmission(db, {
+      userId: uid, contestId, problemVersionId: String(other.insertedId), language: 'python', code: 'print(1)', kind: 'contest',
+    })).rejects.toMatchObject({ status: 400 });
   });
 });

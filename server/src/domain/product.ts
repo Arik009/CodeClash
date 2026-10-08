@@ -41,6 +41,16 @@ export async function runSamples(
 ) {
   const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(input.problemVersionId) });
   if (!version) throw new HttpError(404, 'Problem version not found');
+  if (input.contestId) {
+    const contest = await db.collection('contests').findOne({ _id: new ObjectId(input.contestId) });
+    if (!contest || !['running', 'frozen'].includes(contest.status as string)) throw new HttpError(409, 'Contest is not running');
+    const seat = await db.collection('seats').findOne({
+      contestId: contest._id,
+      userId: new ObjectId(input.userId),
+      status: { $in: ['reserved', 'modified', 'competing'] },
+    });
+    if (!seat) throw new HttpError(403, 'A reserved seat is required');
+  }
   const tests = ((version.tests as { input: string; output: string; hidden?: boolean }[]) ?? []).filter((test) => test.hidden === false);
   if (tests.length === 0) throw new HttpError(400, 'This problem has no sample tests');
   const limits = (version.limits as Record<string, { timeMs: number; memoryMb: number }>) ?? {};

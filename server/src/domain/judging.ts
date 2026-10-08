@@ -43,6 +43,21 @@ export async function enqueueSubmission(
   const version = await latestPublished(db, requested.problemId as ObjectId);
   if (!version) throw new HttpError(404, 'Problem version is not published');
 
+  if (input.kind === 'contest') {
+    if (!input.contestId) throw new HttpError(400, 'Contest is required');
+    const contest = await db.collection('contests').findOne({ _id: new ObjectId(input.contestId) });
+    if (!contest || !['running', 'frozen'].includes(contest.status as string)) throw new HttpError(409, 'Contest is not running');
+    if ((contest.endsAt as Date).getTime() <= Date.now()) throw new HttpError(409, 'Contest has ended');
+    const seat = await db.collection('seats').findOne({
+      contestId: contest._id,
+      userId: new ObjectId(input.userId),
+      status: { $in: ['reserved', 'modified', 'competing'] },
+    });
+    if (!seat) throw new HttpError(403, 'A reserved seat is required');
+    const inContest = ((contest.problemIds as ObjectId[]) ?? []).some((id) => id.equals(version.problemId as ObjectId));
+    if (!inContest) throw new HttpError(400, 'This problem is not part of the contest');
+  }
+
   if (input.idempotencyKey) {
     const existing = await db.collection('submissions').findOne({
       userId: new ObjectId(input.userId),
