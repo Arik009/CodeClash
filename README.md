@@ -8,7 +8,7 @@ Local platform for live coding and quiz contests. The browser talks to an API. A
 - Docker Desktop, running. On Windows, use the WSL2 backend
 - Git
 
-Submissions can be Python or JavaScript. The judge pulls the matching image the first time that language runs (`python:3.12-alpine`, `node:22-alpine`), so the first submit in a language is slower.
+Submissions can be Python, JavaScript, C, C++17, Java 21, or Go. The judge pulls the matching image the first time that language runs (`python:3.12-alpine`, `node:22-alpine`, `gcc:14`, `eclipse-temurin:21-jdk-alpine`, `golang:1.23-alpine`), so the first submit in a language is slower. Java source must be a public class named `Main`.
 
 ## Run it
 

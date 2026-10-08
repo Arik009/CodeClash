@@ -26,7 +26,7 @@ jobs:
       - run: npm run typecheck
       - name: Pull sandbox images
         run: |
-          for image in node:22-alpine python:3.12-alpine; do
+          for image in node:22-alpine python:3.12-alpine gcc:14 eclipse-temurin:21-jdk-alpine golang:1.23-alpine; do
             docker pull -q "$image"
           done
       - name: Unit, integration and isolation tests with coverage
