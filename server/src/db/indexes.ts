@@ -7,6 +7,7 @@ export async function ensureIndexes(db: Db) {
     { contestId: 1, userId: 1 },
     { unique: true, partialFilterExpression: { active: true } },
   );
+  await db.collection('first_solves').createIndex({ contestId: 1, problemId: 1 }, { unique: true });
   await db.collection('standings').createIndex({ contestId: 1, userId: 1 }, { unique: true });
   await db.collection('submissions').createIndex({ status: 1, submittedAt: 1 });
   await db.collection('problem_versions').createIndex({ problemId: 1, version: 1 }, { unique: true });

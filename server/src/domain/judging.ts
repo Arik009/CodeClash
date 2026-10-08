@@ -127,7 +127,16 @@ export async function commitVerdict(
     sentAt: null,
   });
   if (updated.kind === 'contest' && updated.contestId) {
-    const { recomputeStanding } = await import('./scoring.js');
+    const { awardFirstSolve, recomputeStanding } = await import('./scoring.js');
+    if (verdict === 'AC') {
+      await awardFirstSolve(db, {
+        contestId: updated.contestId,
+        problemId: updated.problemId,
+        userId: updated.userId,
+        submissionId: updated._id,
+        submittedAt: updated.submittedAt,
+      });
+    }
     await db.collection('submissions').updateOne({ _id: updated._id }, { $set: { status: 'scored' } });
     await recomputeStanding(db, String(updated.contestId), String(updated.userId));
   }

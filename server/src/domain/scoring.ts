@@ -65,6 +65,31 @@ export async function leaderboard(db: Db, contestId: string): Promise<BoardRow[]
     .sort(compareStanding);
 }
 
+/** Earliest submittedAt wins; ties break on the lower submission id. */
+export async function awardFirstSolve(
+  db: Db,
+  input: { contestId: ObjectId; problemId: ObjectId; userId: ObjectId; submissionId: ObjectId; submittedAt: Date },
+) {
+  try {
+    await db.collection('first_solves').insertOne(input);
+    return true;
+  } catch (error) {
+    if (typeof error === 'object' && error && (error as { code?: number }).code !== 11000) throw error;
+  }
+  const updated = await db.collection('first_solves').updateOne(
+    {
+      contestId: input.contestId,
+      problemId: input.problemId,
+      $or: [
+        { submittedAt: { $gt: input.submittedAt } },
+        { submittedAt: input.submittedAt, submissionId: { $gt: input.submissionId } },
+      ],
+    },
+    { $set: { userId: input.userId, submissionId: input.submissionId, submittedAt: input.submittedAt } },
+  );
+  return updated.modifiedCount === 1;
+}
+
 /** Higher is better, in the same order as compareStanding (penalty stays under 1e5 minutes). */
 export function standingScore(row: { solved: number; penalty: number; quizPoints?: number }) {
   return row.solved * 1e12 + (row.quizPoints ?? 0) * 1e5 - row.penalty;
@@ -94,6 +119,15 @@ export async function dispatchOutbox(
       rescore = true;
       const submission = await db.collection('submissions').findOne({ _id: new ObjectId(payload.submissionId) });
       if (submission && submission.status !== 'scored') {
+        if (payload.verdict === 'AC' && payload.problemId) {
+          await awardFirstSolve(db, {
+            contestId: new ObjectId(payload.contestId),
+            problemId: new ObjectId(payload.problemId),
+            userId: new ObjectId(payload.userId),
+            submissionId: submission._id,
+            submittedAt: payload.submittedAt ?? (submission.submittedAt as Date),
+          });
+        }
         await db.collection('submissions').updateOne({ _id: submission._id }, { $set: { status: 'scored' } });
       }
     }

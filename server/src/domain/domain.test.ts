@@ -7,7 +7,7 @@ import { HttpError } from './errors.js';
 import { claimSubmission, commitVerdict, enqueueSubmission, reclaimSubmission } from './judging.js';
 import { testsFromZip } from './problems.js';
 import { reserveSeat, seatInvariants, withdrawSeat } from './registration.js';
-import { dispatchOutbox, leaderboard } from './scoring.js';
+import { awardFirstSolve, dispatchOutbox, leaderboard } from './scoring.js';
 import AdmZip from 'adm-zip';
 
 let repl: MongoMemoryReplSet;
@@ -132,7 +132,7 @@ describe('contests', () => {
 });
 
 describe('exactly once', () => {
-  it('ignores a stale claim token and commits one verdict', async () => {
+  it('ignores a stale claim token and awards first solve once', async () => {
     const contestId = await openContest(10);
     const uid = await user();
     await db.collection('seats').insertOne({
@@ -171,8 +171,18 @@ describe('exactly once', () => {
     expect(fresh).not.toBeNull();
     const again = await commitVerdict(db, queued.id, 'token-b', 'AC', null);
     expect(again).toBeNull();
+    const solves = await db.collection('first_solves').countDocuments({ contestId: new ObjectId(contestId) });
+    expect(solves).toBe(1);
     const board = await leaderboard(db, contestId);
     expect(board[0]?.solved).toBe(1);
+    const won = await awardFirstSolve(db, {
+      contestId: new ObjectId(contestId),
+      problemId: problem.insertedId,
+      userId: new ObjectId(uid),
+      submissionId: new ObjectId(),
+      submittedAt: new Date('2030-01-01'),
+    });
+    expect(won).toBe(false);
   });
 
   it('refuses a submission without a seat', async () => {
