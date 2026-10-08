@@ -1,9 +1,9 @@
-import { FilePlus2, Plus, Save, Search, X } from 'lucide-react';
+import { FilePlus2, FileUp, Plus, Save, Search, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, isAbort } from '../api';
 import { ProblemView } from '../problem';
-import { Alert, Empty, errorText, StatusPill, toast, type Language } from '../ui';
+import { Alert, Editor, Empty, errorText, LANGUAGES, StatusPill, toast, type Language } from '../ui';
 
 interface ProblemRow { problemId: string; versionId: string; version: number; title: string; status: string }
 interface Test { input: string; output: string; hidden: boolean }
@@ -24,7 +24,7 @@ interface Version {
   status: string;
   report: string[];
 }
-type Section = 'statement';
+type Section = 'statement' | 'tests' | 'solutions';
 
 const EDITABLE = ['draft', 'blocked'];
 
@@ -126,8 +126,27 @@ export function Authoring() {
         method: 'PATCH',
         body: JSON.stringify({ title: version.title, statement: version.statement, samples: version.samples, editorial: version.editorial, tags: version.tags, difficulty: version.difficulty }),
       });
+      await api(`/api/problem-versions/${version.versionId}/tests`, {
+        method: 'PUT',
+        body: JSON.stringify({ tests: version.tests, reference: version.reference, wrongSolutions: version.wrongSolutions }),
+      });
       await Promise.all([loadVersion(version.versionId), loadProblems()]);
       toast('Saved', 'ok');
+    });
+  }
+
+  async function uploadZip(file: File) {
+    if (!version) return;
+    await guarded('zip', async () => {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = '';
+      bytes.forEach((b) => { binary += String.fromCharCode(b); });
+      const result = await api<{ count: number }>(`/api/problem-versions/${version.versionId}/tests-zip`, {
+        method: 'POST',
+        body: JSON.stringify({ zipBase64: btoa(binary) }),
+      });
+      await loadVersion(version.versionId);
+      toast(`Loaded ${result.count} tests from the zip`, 'ok');
     });
   }
 
@@ -235,9 +254,11 @@ export function Authoring() {
 
 
               <nav className="tabs" role="tablist" aria-label="Sections">
-                {([['statement', 'statement']] as const).map(([key, name]) => (
+                {([['statement', 'statement'], ['tests', 'tests'], ['solutions', 'solutions']] as const).map(([key, name]) => (
                   <button key={key} type="button" role="tab" aria-selected={section === key} className={`tab ${section === key ? 'on' : ''}`} onClick={() => setSection(key)}>
                     {name}
+                    {key === 'tests' ? <span className="count">{version.tests.length}</span> : null}
+                    {key === 'solutions' ? <span className="count">{(version.reference ? 1 : 0) + version.wrongSolutions.length}</span> : null}
                   </button>
                 ))}
               </nav>
@@ -271,11 +292,91 @@ export function Authoring() {
                   </div>
                 </div>
               ) : null}
+
+              <fieldset disabled={!editable || working !== ''}>
+                {section === 'tests' ? (
+                  <>
+                    <div className="row between" style={{ marginBottom: 'var(--space-3)' }}>
+                      <span className="muted small">Hidden tests are never shown to participants. Files named sample*.in stay visible.</span>
+                      <div className="row">
+                        <label className="btn sm file" style={{ margin: 0 }}>
+                          <FileUp size={14} /> upload zip
+                          <input type="file" accept=".zip" onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadZip(file); e.target.value = ''; }} />
+                        </label>
+                        <button className="btn sm" type="button" onClick={() => patch({ tests: [...version.tests, { input: '', output: '', hidden: true }] })}><Plus size={14} /> add test</button>
+                      </div>
+                    </div>
+                    {version.tests.length === 0 ? <div className="table-wrap"><Empty title="No tests yet">Add them by hand or upload a zip of paired .in / .out files.</Empty></div> : (
+                      <div className="test-list">
+                        {version.tests.map((test, index) => (
+                          <div key={index} className="test-item">
+                            <span className="idx num">#{index + 1}</span>
+                            <textarea aria-label={`Test ${index + 1} input`} placeholder="input" value={test.input} onChange={(e) => patch({ tests: version.tests.map((t, i) => (i === index ? { ...t, input: e.target.value } : t)) })} />
+                            <textarea aria-label={`Test ${index + 1} output`} placeholder="expected output" value={test.output} onChange={(e) => patch({ tests: version.tests.map((t, i) => (i === index ? { ...t, output: e.target.value } : t)) })} />
+                            <div className="stack tight">
+                              <label className="check"><input type="checkbox" checked={test.hidden} onChange={(e) => patch({ tests: version.tests.map((t, i) => (i === index ? { ...t, hidden: e.target.checked } : t)) })} /> hidden</label>
+                              <button className="btn danger sm" type="button" onClick={() => patch({ tests: version.tests.filter((_, i) => i !== index) })} aria-label={`Remove test ${index + 1}`}><Trash2 size={13} /></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : null}
+
+                {section === 'solutions' ? (
+                  <>
+                    <p className="section-title" style={{ marginTop: 0 }}>Reference solution <span className="muted small">· must pass every test</span></p>
+                    <SolutionEditor
+                      value={{ label: 'reference', ...(version.reference ?? { language: 'python', code: '' }) }}
+                      readOnly={!editable}
+                      onChange={(next) => patch({ reference: { language: next.language, code: next.code } })}
+                    />
+                    <div className="row between">
+                      <p className="section-title">Wrong solutions <span className="muted small">· each must fail at least one test</span></p>
+                      <button className="btn sm" type="button" onClick={() => patch({ wrongSolutions: [...version.wrongSolutions, { label: `wrong-${version.wrongSolutions.length + 1}`, language: 'python', code: '' }] })}><Plus size={14} /> add</button>
+                    </div>
+                    {version.wrongSolutions.length === 0 ? <p className="muted small">None yet.</p> : null}
+                    {version.wrongSolutions.map((solution, index) => (
+                      <SolutionEditor
+                        key={index}
+                        value={solution}
+                        withLabel
+                        readOnly={!editable}
+                        onChange={(next) => patch({ wrongSolutions: version.wrongSolutions.map((s, i) => (i === index ? next : s)) })}
+                        onRemove={() => patch({ wrongSolutions: version.wrongSolutions.filter((_, i) => i !== index) })}
+                      />
+                    ))}
+                  </>
+                ) : null}
+              </fieldset>
               </div>
             </div>
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+function SolutionEditor({ value, onChange, withLabel, readOnly, onRemove }: {
+  value: Solution;
+  onChange: (next: Solution) => void;
+  withLabel?: boolean;
+  readOnly?: boolean;
+  onRemove?: () => void;
+}) {
+  return (
+    <div className="solution">
+      <div className="solution-head">
+        {withLabel ? <input aria-label="Label" value={value.label} onChange={(e) => onChange({ ...value, label: e.target.value })} style={{ maxWidth: '12rem' }} /> : <strong className="small">reference</strong>}
+        <select aria-label="Language" value={value.language} onChange={(e) => onChange({ ...value, language: e.target.value as Language })}>
+          {LANGUAGES.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+        <span className="grow" />
+        {onRemove ? <button className="btn danger sm" type="button" onClick={onRemove} aria-label={`Remove ${value.label}`}><Trash2 size={13} /></button> : null}
+      </div>
+      <Editor language={value.language} value={value.code} onChange={(code) => onChange({ ...value, code })} height="240px" readOnly={readOnly} />
     </div>
   );
 }

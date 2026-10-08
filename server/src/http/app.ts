@@ -7,7 +7,7 @@ import { auditCollection } from '../db/audit.js';
 import { transitionContest } from '../domain/contests.js';
 import { HttpError } from '../domain/errors.js';
 import { enqueueSubmission, latestPublished, publishedVersions } from '../domain/judging.js';
-import { type RunCase } from '../domain/problems.js';
+import { testsFromZip, type RunCase } from '../domain/problems.js';
 import { reserveSeat, withdrawSeat } from '../domain/registration.js';
 import { leaderboard } from '../domain/scoring.js';
 import { checkPassword, hashPassword, issueRefresh, readAccess, revokeRefresh, rotateRefresh, signAccess } from './auth.js';
@@ -428,6 +428,39 @@ export function createApp(deps: AppDeps) {
     );
     if (updated.matchedCount === 0) throw new HttpError(409, 'Only draft or blocked versions can be edited');
     res.json({ ok: true });
+  }));
+
+  app.put('/api/problem-versions/:id/tests', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const body = z.object({
+      tests: z.array(z.object({
+        input: z.string(),
+        output: z.string(),
+        hidden: z.boolean().default(true),
+      })),
+      reference: z.object({ language: z.enum(SOURCE_LANGUAGES), code: z.string() }).nullable().default(null),
+      wrongSolutions: z.array(z.object({ label: z.string(), language: z.enum(SOURCE_LANGUAGES), code: z.string() })).default([]),
+      limits: z.record(z.object({ timeMs: z.number().int().positive(), memoryMb: z.number().int().positive() })).optional(),
+    }).parse(req.body);
+    const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(req.params.id) });
+    if (!version) throw new HttpError(404, 'Version not found');
+    if (!['draft', 'blocked'].includes(version.status as string)) throw new HttpError(409, 'Only draft or blocked versions can change');
+    await db.collection('problem_versions').updateOne(
+      { _id: version._id },
+      { $set: { tests: body.tests, reference: body.reference?.code ? body.reference : null, wrongSolutions: body.wrongSolutions, ...(body.limits ? { limits: body.limits } : {}), status: 'draft' } },
+    );
+    res.json({ ok: true });
+  }));
+
+  app.post('/api/problem-versions/:id/tests-zip', asyncRoute(async (req, res) => {
+    requireRole(req, ['setter', 'admin']);
+    const body = z.object({ zipBase64: z.string().min(1) }).parse(req.body);
+    const tests = testsFromZip(Buffer.from(body.zipBase64, 'base64'));
+    const version = await db.collection('problem_versions').findOne({ _id: new ObjectId(req.params.id) });
+    if (!version) throw new HttpError(404, 'Version not found');
+    if (!['draft', 'blocked'].includes(version.status as string)) throw new HttpError(409, 'Only draft or blocked versions can change');
+    await db.collection('problem_versions').updateOne({ _id: version._id }, { $set: { tests, status: 'draft' } });
+    res.json({ count: tests.length });
   }));
 
   app.get('/api/archive', asyncRoute(async (req, res) => {

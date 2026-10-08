@@ -5,8 +5,10 @@ import { ensureIndexes } from '../db/indexes.js';
 import { tickContests, transitionContest } from './contests.js';
 import { HttpError } from './errors.js';
 import { claimSubmission, commitVerdict, enqueueSubmission, reclaimSubmission } from './judging.js';
+import { testsFromZip } from './problems.js';
 import { reserveSeat, seatInvariants, withdrawSeat } from './registration.js';
 import { dispatchOutbox, leaderboard } from './scoring.js';
+import AdmZip from 'adm-zip';
 
 let repl: MongoMemoryReplSet;
 let client: MongoClient;
@@ -196,6 +198,18 @@ describe('exactly once', () => {
 });
 
 describe('problems', () => {
+
+  it('reads paired .in and .out files from a zip', () => {
+    const zip = new AdmZip();
+    zip.addFile('1.in', Buffer.from('1 2\n'));
+    zip.addFile('1.out', Buffer.from('3\n'));
+    zip.addFile('sample-1.in', Buffer.from('0 0\n'));
+    zip.addFile('sample-1.out', Buffer.from('0\n'));
+    const tests = testsFromZip(zip.toBuffer());
+    expect(tests).toHaveLength(2);
+    expect(tests.find((t) => t.input.startsWith('0'))?.hidden).toBe(false);
+    expect(tests.find((t) => t.input.startsWith('1'))?.hidden).toBe(true);
+  });
 
   it('scores a judged contest submission from the outbox into the sorted set', async () => {
     const contestId = await openContest(10);

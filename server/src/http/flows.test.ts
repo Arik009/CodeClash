@@ -1,3 +1,4 @@
+import AdmZip from 'adm-zip';
 import { hash } from '@node-rs/argon2';
 import type { Express } from 'express';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
@@ -90,7 +91,7 @@ afterAll(async () => {
 });
 
 describe('authoring', () => {
-  it('creates a problem and edits its draft version', async () => {
+  it('creates a problem and uploads its tests, reference and limits', async () => {
     expect((await api('post', '/api/problems', neha.token, { title: 'x', statement: 'y' })).status).toBe(403);
     const created = await api('post', '/api/problems', setter, {
       title: 'Double', statement: 'Print twice n.', samples: 'input\n4\noutput\n8\n', editorial: 'Multiply by two.', tags: ['math'],
@@ -101,8 +102,29 @@ describe('authoring', () => {
     const list = await api('get', '/api/problems', setter);
     expect(list.body.map((row: { title: string }) => row.title)).toContain('Double');
     expect((await api('patch', `/api/problem-versions/${versionId}`, setter, { title: 'Double it' })).body).toEqual({ ok: true });
+
+    const zip = new AdmZip();
+    zip.addFile('tests/sample1.in', Buffer.from('4\n'));
+    zip.addFile('tests/sample1.out', Buffer.from('8\n'));
+    zip.addFile('tests/2.in', Buffer.from('-3\n'));
+    zip.addFile('tests/2.out', Buffer.from('-6\n'));
+    zip.addFile('tests/orphan.in', Buffer.from('1\n'));
+    const uploaded = await api('post', `/api/problem-versions/${versionId}/tests-zip`, setter, { zipBase64: zip.toBuffer().toString('base64') });
+    expect(uploaded.body.count).toBe(2);
+    const empty = new AdmZip();
+    empty.addFile('readme.txt', Buffer.from('no tests'));
+    expect((await api('post', `/api/problem-versions/${versionId}/tests-zip`, setter, { zipBase64: empty.toBuffer().toString('base64') })).status).toBe(400);
+
+    const saved = await api('put', `/api/problem-versions/${versionId}/tests`, setter, {
+      tests: [{ input: '4\n', output: '8\n', hidden: false }, { input: '-3\n', output: '-6\n' }],
+      reference: { language: 'python', code: '# REF' },
+      wrongSolutions: [{ label: 'echo', language: 'python', code: 'print(input())' }],
+      limits: { python: { timeMs: 1000, memoryMb: 128 } },
+    });
+    expect(saved.status).toBe(200);
     const draft = await api('get', `/api/problem-versions/${versionId}`, setter);
     expect(draft.body).toMatchObject({ title: 'Double it', status: 'draft', tags: ['math'] });
+    expect(draft.body.tests).toHaveLength(2);
   });
 
   it('starts a new draft version and answers 404 for unknown ids', async () => {
