@@ -16,6 +16,7 @@
     "test:coverage": "npm run test:coverage -w packages/shared && npm run test:coverage -w server && npm run test:coverage -w judge",
     "seed": "npm run seed -w server",
     "lint": "eslint .",
+    "backup": "node scripts/backup.mjs",
     "build": "npm run build -w packages/shared && npm run build -w judge && npm run build -w server && npm run build -w client",
     "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w server && npm run typecheck -w judge && npm run typecheck -w client"
   },

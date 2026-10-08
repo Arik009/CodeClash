@@ -122,3 +122,10 @@ These need `npm run dev` already running:
 ```bash
 node tests/failure/run.mjs redis mongo   # failure drills; see tests/failure/README.md
 ```
+
+## Useful commands
+
+```bash
+npm run backup                        # dump both databases into backups/; keeps the newest 7
+npm run backup -- restore <file>      # restore codeclash and codeclash_audit (drops them first)
+```
