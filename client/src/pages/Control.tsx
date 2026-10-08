@@ -192,6 +192,7 @@ export function Control() {
                   <label htmlFor="scoring" style={{ marginTop: 0 }}>Scoring</label>
                   <select id="scoring" value={type === 'quiz' ? 'quiz' : scoringMode} disabled={type === 'quiz'} onChange={(e) => setScoringMode(e.target.value as 'icpc' | 'ioi')}>
                     <option value="icpc">ICPC penalty</option>
+                    <option value="ioi">IOI partial scores</option>
                     <option value="quiz">Quiz only</option>
                   </select>
                 </div>

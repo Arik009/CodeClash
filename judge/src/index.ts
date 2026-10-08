@@ -5,7 +5,7 @@ import { hostname } from 'node:os';
 import { Redis } from 'ioredis';
 import { MongoClient, ObjectId } from 'mongodb';
 import { canTakePractice } from './slots.js';
-import { judgeCases } from './decide.js';
+import { judgeCases, judgeSubtasks } from './decide.js';
 import { judgeBatch, runInDocker } from './runner.js';
 
 const mongo = new MongoClient(process.env.MONGO_URL ?? 'mongodb://app:codeclash@127.0.0.1:27017/codeclash?replicaSet=rs0&authSource=codeclash');
@@ -63,6 +63,7 @@ async function handle(stream: string, id: string, submissionId: string) {
   try {
     const version = await db.collection('problem_versions').findOne({ _id: claimed.problemVersionId });
     const tests = (version?.tests as { input: string; output: string; group?: string }[]) ?? [];
+    const subtasks = (version?.subtasks as { name: string; points: number }[]) ?? [];
     const limits = (version?.limits as Record<string, { timeMs: number; memoryMb: number }>) ?? {};
     const language = claimed.language as SourceLanguage;
     const limit = limits[language] ?? defaultLimit(language);
@@ -73,10 +74,11 @@ async function handle(stream: string, id: string, submissionId: string) {
       : null;
     const run = async (test: { input: string; output: string }) => batched?.get(test)
       ?? runInDocker({ ...request, stdin: test.input, expected: test.output });
-    const result = await judgeCases(tests, run);
+    const result = subtasks.length > 0 ? await judgeSubtasks(tests, subtasks, run) : await judgeCases(tests, run);
+    const points = 'points' in result ? result.points : result.verdict === 'AC' ? 100 : 0;
     const saved = await db.collection('submissions').updateOne(
       { _id: claimed._id, claimToken: token, status: { $in: ['claimed', 'running'] } },
-      { $set: { status: 'judged', verdict: result.verdict, reason: result.reason, judgedAt: new Date() } },
+      { $set: { status: 'judged', verdict: result.verdict, reason: result.reason, points, judgedAt: new Date() } },
     );
     if (saved.matchedCount === 1) {
       await db.collection('outbox').insertOne({

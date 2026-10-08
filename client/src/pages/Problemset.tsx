@@ -162,7 +162,7 @@ export function Problemset() {
             ) : <p className="muted small" style={{ margin: 0 }}>Sign in to see your rating and streak. Anyone can browse.</p>}
           </Box>
           <Box title="how scoring works">
-            <p className="muted small" style={{ margin: 0 }}>Run samples checks the visible examples and records nothing. Submit judges the hidden tests.</p>
+            <p className="muted small" style={{ margin: 0 }}>Run samples checks the visible examples and records nothing. Submit judges the hidden tests. A problem with subtasks keeps the points of every group you fully solve.</p>
           </Box>
         </aside>
       </div>

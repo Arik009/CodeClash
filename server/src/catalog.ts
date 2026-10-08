@@ -12,6 +12,7 @@ export interface CatalogProblem {
   contest: boolean;
   pool?: 'warmup' | 'archive' | 'practice';
   difficulty?: 'easy' | 'medium' | 'hard';
+  subtasks?: { name: string; points: number }[];
   inputSpec: string;
   tests: CatalogTest[];
   reference: string;

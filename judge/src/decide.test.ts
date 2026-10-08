@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyRun, decide, judgeCases } from './decide.js';
+import { classifyRun, decide, judgeCases, judgeSubtasks } from './decide.js';
 import { canTakePractice, nextStream } from './slots.js';
 import { dockerArgs } from './runner.js';
 
@@ -70,6 +70,21 @@ describe('early exit', () => {
     const fullMs = performance.now() - fullStarted;
     expect(early.ran).toBe(1);
     expect(earlyMs).toBeLessThan(fullMs);
+  });
+});
+
+describe('subtasks', () => {
+  it('keeps points from a solved group when a later group fails', async () => {
+    const tests = [
+      { group: 'sample', input: '1' },
+      { group: 'full', input: '2' },
+    ];
+    const result = await judgeSubtasks(tests, [{ name: 'sample', points: 30 }, { name: 'full', points: 70 }], async (test) => (
+      test.input === '1' ? { verdict: 'AC', reason: null } : { verdict: 'WA', reason: null }
+    ));
+    expect(result.points).toBe(30);
+    expect(result.verdict).toBe('WA');
+    expect(result.ran).toBe(2);
   });
 });
 

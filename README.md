@@ -133,4 +133,5 @@ node tests/failure/run.mjs redis mongo   # failure drills; see tests/failure/REA
 ```bash
 npm run backup                        # dump both databases into backups/; keeps the newest 7
 npm run backup -- restore <file>      # restore codeclash and codeclash_audit (drops them first)
+npm run rescore -w server             # recompute stored standings after a scoring change
 ```

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canTransition,
+  partialScore,
   practiceStreak,
   rateContest,
   streakBonus,
@@ -136,6 +137,20 @@ describe('rules', () => {
   it('counts a practice streak through yesterday when today is empty', () => {
     expect(practiceStreak(['2026-09-29', '2026-09-30'], new Date('2026-10-01T12:00:00Z'))).toBe(2);
     expect(practiceStreak(['2026-09-28'], new Date('2026-10-01T12:00:00Z'))).toBe(0);
+  });
+
+  it('awards a subtask only when every test in the group passes', () => {
+    const tests = [{ group: 'sample' }, { group: 'full' }, { group: 'full' }];
+    const subtasks = [{ name: 'sample', points: 30 }, { name: 'full', points: 70 }];
+    expect(partialScore(tests, ['AC', 'AC', 'WA'], subtasks)).toEqual({
+      points: 30,
+      max: 100,
+      groups: [
+        { name: 'sample', points: 30, earned: 30 },
+        { name: 'full', points: 70, earned: 0 },
+      ],
+    });
+    expect(partialScore(tests, ['AC', 'AC', 'AC'], subtasks).points).toBe(100);
   });
 
   it('moves rating toward the result of the contest and floors it at 100', () => {

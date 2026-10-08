@@ -138,7 +138,7 @@ for (const item of [...CATALOG, ...MORE]) {
     tags: item.tags,
     difficulty: item.difficulty ?? 'easy',
     limits: defaultLimits(),
-    subtasks: [],
+    subtasks: item.subtasks ?? [],
     inputSpec: item.inputSpec,
     tests: item.tests,
     reference: { language: 'python', code: item.reference },

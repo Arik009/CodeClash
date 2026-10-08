@@ -1,3 +1,5 @@
+import { partialScore, type SubtaskDef } from '@codeclash/shared';
+
 export type JudgeVerdict = 'AC' | 'WA' | 'TLE' | 'MLE' | 'RE' | 'CE';
 
 export interface CaseResult {
@@ -23,6 +25,45 @@ export async function judgeCases<T>(
     if (cases.at(-1)?.verdict !== 'AC') break;
   }
   return { ...decide(cases), ran: cases.length };
+}
+
+/**
+ * Each subtask stops at its first failure. Later subtasks still run,
+ * so a sample solve can score even when the full tests fail.
+ */
+export async function judgeSubtasks<T extends { group?: string | null }>(
+  tests: T[],
+  subtasks: SubtaskDef[],
+  run: (test: T) => Promise<CaseResult>,
+): Promise<{ verdict: JudgeVerdict; reason: string | null; ran: number; points: number; max: number }> {
+  if (subtasks.length === 0) {
+    const result = await judgeCases(tests, run);
+    return { ...result, points: result.verdict === 'AC' ? 100 : 0, max: 100 };
+  }
+  const verdicts: (JudgeVerdict | null)[] = tests.map(() => null);
+  let ran = 0;
+  let firstFail: CaseResult | null = null;
+  for (const subtask of subtasks) {
+    for (let index = 0; index < tests.length; index += 1) {
+      if ((tests[index]!.group ?? 'main') !== subtask.name) continue;
+      const outcome = await run(tests[index]!);
+      verdicts[index] = outcome.verdict;
+      ran += 1;
+      if (outcome.verdict !== 'AC') {
+        firstFail ??= outcome;
+        break;
+      }
+    }
+  }
+  const score = partialScore(tests, verdicts, subtasks);
+  const failed = verdicts.find((verdict) => verdict && verdict !== 'AC');
+  return {
+    verdict: failed ?? (ran === 0 ? 'RE' : 'AC'),
+    reason: failed ? firstFail?.reason ?? null : ran === 0 ? 'no tests' : null,
+    ran,
+    points: score.points,
+    max: score.max,
+  };
 }
 
 export function classifyRun(input: {

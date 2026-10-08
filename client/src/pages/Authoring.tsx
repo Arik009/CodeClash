@@ -6,7 +6,8 @@ import { ProblemView } from '../problem';
 import { Alert, Editor, Empty, errorText, LANGUAGES, StatusPill, toast, type Language } from '../ui';
 
 interface ProblemRow { problemId: string; versionId: string; version: number; title: string; status: string }
-interface Test { input: string; output: string; hidden: boolean }
+interface Test { input: string; output: string; hidden: boolean; group?: string }
+interface Subtask { name: string; points: number }
 interface Solution { label: string; language: Language; code: string }
 interface Version {
   problemId: string;
@@ -18,6 +19,7 @@ interface Version {
   editorial: string;
   tags: string[];
   difficulty: 'easy' | 'medium' | 'hard';
+  subtasks: Subtask[];
   tests: Test[];
   reference: { language: Language; code: string } | null;
   wrongSolutions: Solution[];
@@ -133,7 +135,7 @@ export function Authoring() {
       });
       await api(`/api/problem-versions/${version.versionId}/tests`, {
         method: 'PUT',
-        body: JSON.stringify({ tests: version.tests, reference: version.reference, wrongSolutions: version.wrongSolutions }),
+        body: JSON.stringify({ tests: version.tests, subtasks: version.subtasks ?? [], reference: version.reference, wrongSolutions: version.wrongSolutions }),
       });
       await Promise.all([loadVersion(version.versionId), loadProblems()]);
       toast('Saved', 'ok');
@@ -348,7 +350,7 @@ export function Authoring() {
                           <FileUp size={14} /> upload zip
                           <input type="file" accept=".zip" onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadZip(file); e.target.value = ''; }} />
                         </label>
-                        <button className="btn sm" type="button" onClick={() => patch({ tests: [...version.tests, { input: '', output: '', hidden: true }] })}><Plus size={14} /> add test</button>
+                        <button className="btn sm" type="button" onClick={() => patch({ tests: [...version.tests, { input: '', output: '', hidden: true, group: '' }] })}><Plus size={14} /> add test</button>
                       </div>
                     </div>
                     {version.tests.length === 0 ? <div className="table-wrap"><Empty title="No tests yet">Add them by hand or upload a zip of paired .in / .out files.</Empty></div> : (
@@ -359,6 +361,7 @@ export function Authoring() {
                             <textarea aria-label={`Test ${index + 1} input`} placeholder="input" value={test.input} onChange={(e) => patch({ tests: version.tests.map((t, i) => (i === index ? { ...t, input: e.target.value } : t)) })} />
                             <textarea aria-label={`Test ${index + 1} output`} placeholder="expected output" value={test.output} onChange={(e) => patch({ tests: version.tests.map((t, i) => (i === index ? { ...t, output: e.target.value } : t)) })} />
                             <div className="stack tight">
+                              <input aria-label={`Test ${index + 1} subtask`} placeholder="subtask" value={test.group ?? ''} onChange={(e) => patch({ tests: version.tests.map((t, i) => (i === index ? { ...t, group: e.target.value } : t)) })} />
                               <label className="check"><input type="checkbox" checked={test.hidden} onChange={(e) => patch({ tests: version.tests.map((t, i) => (i === index ? { ...t, hidden: e.target.checked } : t)) })} /> hidden</label>
                               <button className="btn danger sm" type="button" onClick={() => patch({ tests: version.tests.filter((_, i) => i !== index) })} aria-label={`Remove test ${index + 1}`}><Trash2 size={13} /></button>
                             </div>
@@ -366,6 +369,16 @@ export function Authoring() {
                         ))}
                       </div>
                     )}
+                    <div className="row between" style={{ marginTop: 'var(--space-4)' }}>
+                      <p className="section-title" style={{ margin: 0 }}>Subtasks <span className="muted small">· a group scores only if every test in it passes</span></p>
+                      <button className="btn sm" type="button" onClick={() => patch({ subtasks: [...(version.subtasks ?? []), { name: '', points: 10 }] })}><Plus size={14} /> add subtask</button>
+                    </div>
+                    {(version.subtasks ?? []).map((subtask, index) => (
+                      <div key={index} className="field-row">
+                        <div><label>Name</label><input aria-label={`Subtask ${index + 1} name`} value={subtask.name} onChange={(e) => patch({ subtasks: version.subtasks.map((s, i) => (i === index ? { ...s, name: e.target.value } : s)) })} /></div>
+                        <div><label>Points</label><input aria-label={`Subtask ${index + 1} points`} type="number" min={1} value={subtask.points} onChange={(e) => patch({ subtasks: version.subtasks.map((s, i) => (i === index ? { ...s, points: Number(e.target.value) } : s)) })} /></div>
+                      </div>
+                    ))}
                   </>
                 ) : null}
 

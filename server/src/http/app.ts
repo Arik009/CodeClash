@@ -254,7 +254,7 @@ export function createApp(deps: AppDeps) {
       endsAt: z.string().datetime(),
       freezeAt: z.string().datetime(),
       registrationOpensAt: z.string().datetime(),
-      scoringMode: z.enum(['icpc', 'quiz']),
+      scoringMode: z.enum(['icpc', 'quiz', 'ioi']),
       problemIds: z.array(z.string()).default([]),
     }).parse(req.body);
     if (new Date(body.endsAt) <= new Date(body.startsAt)) throw new HttpError(400, 'End must be after start');
@@ -396,6 +396,7 @@ export function createApp(deps: AppDeps) {
       version: 1,
       ...body,
       limits: defaultLimits(),
+      subtasks: [],
       tests: [],
       reference: null,
       wrongSolutions: [],
@@ -445,6 +446,7 @@ export function createApp(deps: AppDeps) {
       tags: body.tags ?? latest?.tags ?? [],
       difficulty: latest?.difficulty ?? 'medium',
       limits: latest?.limits,
+      subtasks: latest?.subtasks ?? [],
       tests: latest?.tests ?? [],
       reference: latest?.reference ?? null,
       wrongSolutions: latest?.wrongSolutions ?? [],
@@ -470,6 +472,7 @@ export function createApp(deps: AppDeps) {
       tags: version.tags ?? [],
       difficulty: version.difficulty ?? 'medium',
       limits: version.limits ?? {},
+      subtasks: version.subtasks ?? [],
       tests: version.tests ?? [],
       reference: version.reference ?? null,
       wrongSolutions: version.wrongSolutions ?? [],
@@ -539,7 +542,9 @@ export function createApp(deps: AppDeps) {
         input: z.string(),
         output: z.string(),
         hidden: z.boolean().default(true),
+        group: z.string().optional(),
       })),
+      subtasks: z.array(z.object({ name: z.string().min(1), points: z.number().int().positive() })).default([]),
       reference: z.object({ language: z.enum(SOURCE_LANGUAGES), code: z.string() }).nullable().default(null),
       wrongSolutions: z.array(z.object({ label: z.string(), language: z.enum(SOURCE_LANGUAGES), code: z.string() })).default([]),
       limits: z.record(z.object({ timeMs: z.number().int().positive(), memoryMb: z.number().int().positive() })).optional(),
@@ -549,7 +554,7 @@ export function createApp(deps: AppDeps) {
     if (!['draft', 'blocked'].includes(version.status as string)) throw new HttpError(409, 'Only draft or blocked versions can change');
     await db.collection('problem_versions').updateOne(
       { _id: version._id },
-      { $set: { tests: body.tests, reference: body.reference?.code ? body.reference : null, wrongSolutions: body.wrongSolutions, ...(body.limits ? { limits: body.limits } : {}), status: 'draft' } },
+      { $set: { tests: body.tests, subtasks: body.subtasks, reference: body.reference?.code ? body.reference : null, wrongSolutions: body.wrongSolutions, ...(body.limits ? { limits: body.limits } : {}), status: 'draft' } },
     );
     res.json({ ok: true });
   }));
@@ -628,6 +633,7 @@ export function createApp(deps: AppDeps) {
       tags: version.tags ?? [],
       difficulty: version.difficulty ?? 'medium',
       limits: version.limits ?? null,
+      subtasks: ((version.subtasks as { name: string; points: number }[]) ?? []).map((subtask) => ({ name: subtask.name, points: subtask.points })),
       editorial: version.editorial ?? '',
     });
   }));
@@ -642,6 +648,7 @@ export function createApp(deps: AppDeps) {
       status: submission.status,
       verdict: submission.verdict,
       reason: submission.reason,
+      points: submission.points ?? null,
     });
   }));
 

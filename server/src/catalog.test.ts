@@ -34,6 +34,13 @@ describe('built-in catalog', () => {
     }
   });
 
+  it('puts every test of a subtask problem into a declared group', () => {
+    for (const p of ALL.filter((item) => item.subtasks?.length)) {
+      const names = new Set(p.subtasks!.map((s) => s.name));
+      for (const test of p.tests) expect(names.has(test.group ?? ''), p.title).toBe(true);
+    }
+  });
+
   it('keeps large outputs under the 64 KB judge cap', () => {
     for (const p of ALL) for (const test of p.tests) expect(test.output.length, p.title).toBeLessThan(64_000);
   });

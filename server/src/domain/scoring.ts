@@ -36,12 +36,14 @@ export async function recomputeStanding(db: Db, contestId: string, userId: strin
   }
   const quizPoints = await quizTotal(db, contest._id, uid);
   const frozenQuizPoints = await quizTotal(db, contest._id, uid, freezeAt);
+  const points = contest.scoringMode === 'ioi' ? bestPoints(subs) : undefined;
   await db.collection('standings').updateOne(
     { contestId: contest._id, userId: uid },
     {
       $set: {
         ...row,
         cells: problemCells(attempts, startsAt, endsAt),
+        ...(points === undefined ? {} : { points }),
         quizPoints,
         frozen: { ...frozen, cells: problemCells(beforeFreeze, startsAt, endsAt), pending, quizPoints: frozenQuizPoints },
         contestId: contest._id,
@@ -50,7 +52,22 @@ export async function recomputeStanding(db: Db, contestId: string, userId: strin
     },
     { upsert: true },
   );
-  return { ...row, quizPoints };
+  if (points === undefined) {
+    await db.collection('standings').updateOne({ contestId: contest._id, userId: uid }, { $unset: { points: '' } });
+  }
+  return { ...row, quizPoints, ...(points === undefined ? {} : { points }) };
+}
+
+function bestPoints(subs: Record<string, unknown>[]) {
+  const best = new Map<string, number>();
+  for (const submission of subs) {
+    const id = String(submission.problemId);
+    const value = typeof submission.points === 'number' ? submission.points : submission.verdict === 'AC' ? 100 : 0;
+    best.set(id, Math.max(best.get(id) ?? 0, value));
+  }
+  let total = 0;
+  for (const value of best.values()) total += value;
+  return total;
 }
 
 export interface BoardRow extends StandingRow {
@@ -83,6 +100,7 @@ export async function leaderboard(db: Db, contestId: string, options: { reveal?:
         penalty: (source.penalty as number) ?? 0,
         lastAcAt: (source.lastAcAt as Date | null) ?? null,
         quizPoints: (source.quizPoints as number) ?? 0,
+        ...(typeof source.points === 'number' ? { points: source.points } : {}),
         cells: (source.cells as Record<string, ProblemCell>) ?? {},
         pending: masked ? ((source.pending as Record<string, number>) ?? {}) : {},
       };

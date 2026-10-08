@@ -143,10 +143,16 @@ export function compareIcpc(a: IcpcRow & { userId: string }, b: IcpcRow & { user
 export interface StandingRow extends IcpcRow {
   userId: string;
   quizPoints: number;
+  /** Set for IOI contests: best partial score summed across problems. */
+  points?: number;
 }
 
-/** Solved first, then quiz points, then penalty. */
+/** IOI points rank first when either row has them. Otherwise solved, then quiz, then penalty. */
 export function compareStanding(a: StandingRow, b: StandingRow): number {
+  if (a.points !== undefined || b.points !== undefined) {
+    const delta = (b.points ?? 0) - (a.points ?? 0);
+    if (delta !== 0) return delta;
+  }
   if (a.solved !== b.solved) return b.solved - a.solved;
   if (a.quizPoints !== b.quizPoints) return b.quizPoints - a.quizPoints;
   return compareIcpc(a, b);
@@ -177,6 +183,33 @@ export function practiceStreak(dayKeys: string[], today = new Date()): number {
     cursor.setUTCDate(cursor.getUTCDate() - 1);
   }
   return streak;
+}
+
+export interface SubtaskDef {
+  name: string;
+  points: number;
+}
+
+/** A subtask scores only when every test in its group is accepted. Groups are independent. */
+export function partialScore(
+  tests: { group?: string | null }[],
+  verdicts: (string | null)[],
+  subtasks: SubtaskDef[],
+): { points: number; max: number; groups: { name: string; points: number; earned: number }[] } {
+  if (subtasks.length === 0) {
+    const ok = verdicts.length > 0 && verdicts.every((verdict) => verdict === 'AC');
+    return { points: ok ? 100 : 0, max: 100, groups: [] };
+  }
+  const groups = subtasks.map((subtask) => {
+    const indexes = tests.flatMap((test, index) => ((test.group ?? 'main') === subtask.name ? [index] : []));
+    const solved = indexes.length > 0 && indexes.every((index) => verdicts[index] === 'AC');
+    return { name: subtask.name, points: subtask.points, earned: solved ? subtask.points : 0 };
+  });
+  return {
+    points: groups.reduce((sum, group) => sum + group.earned, 0),
+    max: groups.reduce((sum, group) => sum + group.points, 0),
+    groups,
+  };
 }
 
 export interface RatedPlayer {
